@@ -25,9 +25,6 @@ app.add_middleware(
 # Configure OpenAI API
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
-# Store conversation history
-conversation_history = []
-
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
@@ -38,7 +35,10 @@ class ChatMessage(BaseModel):
 @app.get("/health")
 async def health_check():
     """Health check endpoint for monitoring services."""
-    return {"status": "ok", "message": "Service is running"}
+    return JSONResponse(content={"status": "ok", "message": "Service is running"})
+
+# Initialize conversation history for the chat endpoint
+conversation_history = []
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
