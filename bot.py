@@ -1069,7 +1069,7 @@ def get_response(message):
 # Create the FastAPI app
 app = FastAPI()
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {"status": "ok"}
 
@@ -1102,4 +1102,5 @@ if __name__ == "__main__":
     
     # 3. Now run the bot
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
+
 
