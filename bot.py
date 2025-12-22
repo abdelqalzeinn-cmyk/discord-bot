@@ -1074,29 +1074,16 @@ def get_response(message):
 app = FastAPI()
 
 @app.get("/")
-async def root():
-    return {"status": "Bot is running"}
+def home():
+    return {"status": "Bot is online"}
 
-def run_web():
-    # Render provides the PORT environment variable automatically
-    port = int(os.environ.get("PORT", 8000))
+def run():
+    # This ensures it uses port 10000 (Render default) or the assigned PORT
+    port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
 
-async def main():
-    # 1. Start FastAPI in a background thread
-    web_thread = threading.Thread(target=run_web)
-    web_thread.daemon = True  # Ensure it closes when the main program stops
-    web_thread.start()
-
-    # 2. Start the Discord bot in the main thread
-    token = os.getenv('DISCORD_TOKEN')  # Make sure this matches your .env variable
-    if not token:
-        raise ValueError("No DISCORD_TOKEN found in environment variables")
-    async with bot:
-        await bot.start(token)
-
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    t = threading.Thread(target=run)
+    t.daemon = True
+    t.start()
+    bot.run(os.getenv('DISCORD_TOKEN'))
