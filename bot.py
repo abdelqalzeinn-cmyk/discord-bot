@@ -1074,9 +1074,23 @@ def health():
     return {"status": "ok"}
 
 def run_web():
-    # Force Render to see the app on the correct port
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Try multiple ports starting from the configured one
+    base_port = int(os.environ.get("PORT", 10000))
+    max_attempts = 5
+    
+    for attempt in range(max_attempts):
+        port = base_port + attempt
+        try:
+            print(f"[WEB] Starting web server on port {port}...")
+            uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+            break
+        except OSError as e:
+            if "Address already in use" in str(e) or "Only one usage" in str(e):
+                if attempt < max_attempts - 1:
+                    print(f"[WEB] Port {port} in use, trying {port + 1}...")
+                    continue
+            print(f"[WEB] Error starting server on port {port}: {e}")
+            break
 
 if __name__ == "__main__":
     # 1. Start web server in background thread FIRST
