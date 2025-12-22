@@ -35,6 +35,11 @@ templates = Jinja2Templates(directory="templates")
 class ChatMessage(BaseModel):
     message: str
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring services."""
+    return {"status": "ok", "message": "Service is running"}
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
