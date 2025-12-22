@@ -1,5 +1,9 @@
-from flask import Flask, request, jsonify, render_template
-from flask_cors import CORS
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
 import openai
 from dotenv import load_dotenv
 import os
@@ -7,8 +11,16 @@ import os
 # Load environment variables
 load_dotenv()
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI()
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Configure OpenAI API
 openai.api_key = os.getenv('OPENAI_API_KEY')
@@ -16,18 +28,24 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 # Store conversation history
 conversation_history = []
 
-@app.route('/')
-def home():
-    return render_template('index.html')
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 
-@app.route('/chat', methods=['POST'])
-def chat():
+class ChatMessage(BaseModel):
+    message: str
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.post("/chat")
+async def chat(chat_message: ChatMessage):
     try:
-        data = request.json
-        user_message = data.get('message', '').strip()
+        user_message = chat_message.message.strip()
         
         if not user_message:
-            return jsonify({'error': 'Message cannot be empty'}), 400
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
         
         # Add user message to conversation history
         conversation_history.append({"role": "user", "content": user_message})
@@ -44,12 +62,7 @@ def chat():
         # Add assistant's reply to conversation history
         conversation_history.append({"role": "assistant", "content": assistant_reply})
         
-        return jsonify({
-            'reply': assistant_reply
-        })
+        return {"reply": assistant_reply}
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(debug=True)
+        raise HTTPException(status_code=500, detail=str(e))
