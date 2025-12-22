@@ -1065,39 +1065,38 @@ def get_response(message):
     
     # If it's a question
     if '?' in original_message:
-        return "That's an interesting question! I'm still learning, but I'm happy to help with what I can."
+        return "I'm not sure about that. You can ask me to 'tell me a joke', 'play a game', or 'help' for more options."
     
     # Default response if no matches
     return random.choice(RESPONSES['default'])
 
-def run_http_server():
-    """Run the FastAPI server in a separate thread"""
-    app = FastAPI()
-    
-    @app.get("/")
-    async def health_check():
-        return {"status": "ok", "message": "Bot is running"}
-    
-    port = int(os.getenv('PORT', 8000))
+# Create the FastAPI app
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    return {"status": "Bot is running"}
+
+def run_web():
+    # Render provides the PORT environment variable automatically
+    port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
 
-# Run the bot and HTTP server
+async def main():
+    # 1. Start FastAPI in a background thread
+    web_thread = threading.Thread(target=run_web)
+    web_thread.daemon = True  # Ensure it closes when the main program stops
+    web_thread.start()
+
+    # 2. Start the Discord bot in the main thread
+    token = os.getenv('DISCORD_TOKEN')  # Make sure this matches your .env variable
+    if not token:
+        raise ValueError("No DISCORD_TOKEN found in environment variables")
+    async with bot:
+        await bot.start(token)
+
 if __name__ == "__main__":
-    # Get the bot token from environment variables
-    TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-    if not TOKEN:
-        print("Error: DISCORD_BOT_TOKEN environment variable not set!")
-        exit(1)
-
-    # Start the HTTP server in a separate thread
-    import threading
-    server_thread = threading.Thread(target=run_http_server, daemon=True)
-    server_thread.start()
-
-    # Start the bot
-    print("Starting bot...")
     try:
-        bot.run(TOKEN)
-    except Exception as e:
-        print(f"Error running bot: {e}")
-        exit(1)
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
