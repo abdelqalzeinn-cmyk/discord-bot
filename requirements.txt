@@ -5,3 +5,4 @@ cohere>=4.0.0
 fastapi==0.103.1
 uvicorn==0.23.2 # Added this as it's needed to run FastAPI
 aiohttp
+audioop-lpm
