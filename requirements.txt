@@ -1,8 +1,7 @@
-discord.py==2.3.2
-python-dotenv==0.19.0
-requests==2.31.0
+discord.py>=2.3.2
+python-dotenv>=0.19.0
+requests>=2.31.0
 cohere>=4.0.0
-fastapi==0.103.1
-uvicorn==0.23.2 # Added this as it's needed to run FastAPI
-aiohttp
-audioop-lpm
+fastapi>=0.103.1
+uvicorn>=0.23.2
+aiohttp>=3.8.0
