@@ -8,6 +8,7 @@ import asyncio
 import html
 import json
 import threading
+import time
 from fastapi import FastAPI
 import uvicorn
 from discord.ui import Button, View
@@ -1074,16 +1075,21 @@ def get_response(message):
 app = FastAPI()
 
 @app.get("/")
-def home():
-    return {"status": "Bot is online"}
+def health():
+    return {"status": "ok"}
 
-def run():
-    # This ensures it uses port 10000 (Render default) or the assigned PORT
+def run_web():
+    # Force Render to see the app on the correct port
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    t = threading.Thread(target=run)
-    t.daemon = True
-    t.start()
+    # 1. Start web server in background thread FIRST
+    threading.Thread(target=run_web, daemon=True).start()
+    
+    # 2. Give the server 2 seconds to breathe
+    import time
+    time.sleep(2)
+    
+    # 3. Now run the bot
     bot.run(os.getenv('DISCORD_TOKEN'))
