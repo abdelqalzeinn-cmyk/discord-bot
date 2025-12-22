@@ -108,14 +108,9 @@ down_phrases = [
 @bot.event
 async def on_ready():
     """Event that runs when the bot is ready"""
-    print(f'🤖 Logged in as {bot.user.name} (ID: {bot.user.id})')
+    print(f'[BOT] Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
-    await bot.change_presence(
-        activity=discord.Activity(
-            type=discord.ActivityType.listening,
-            name="your commands | !helpme"
-        )
-    )
+    await bot.change_presence(activity=discord.Game(name="with Python"))
 
 @bot.command(name='hello')
 async def hello(ctx):
@@ -1092,4 +1087,4 @@ if __name__ == "__main__":
     time.sleep(2)
     
     # 3. Now run the bot
-    bot.run(os.getenv('DISCORD_TOKEN'))
+    bot.run(os.getenv('DISCORD_BOT_TOKEN'))
