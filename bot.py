@@ -99,37 +99,86 @@ async def send_long_message(destination: Union[TextChannel, DMChannel], content:
     
     # Split the message into chunks of max_length characters
     chunks = []
+    
+    # First, try to split by double newlines (paragraphs)
+    paragraphs = content.split('\n\n')
     current_chunk = ""
     
-    # Split by paragraphs first to maintain readability
-    paragraphs = content.split('\n\n')
-    
     for paragraph in paragraphs:
-        # If adding this paragraph would exceed the max length, finalize current chunk
-        if len(current_chunk) + len(paragraph) + 2 > max_length and current_chunk:
-            chunks.append(current_chunk)
-            current_chunk = ""
-        
-        # If a single paragraph is too long, split it by sentences or words
+        # If the paragraph itself is too long, we need to split it further
         if len(paragraph) > max_length:
-            # Try to split by sentences first
+            # Split by sentences first
             sentences = paragraph.split('. ')
             for sentence in sentences:
-                if len(current_chunk) + len(sentence) + 2 > max_length and current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = ""
-                current_chunk += ('. ' if current_chunk and not current_chunk.endswith('.') else '') + sentence
+                # Clean up the sentence
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                    
+                # Add period back if it was part of the split
+                if not sentence.endswith('.'):
+                    sentence += '.'
+                
+                # If the sentence is too long, split by words
+                if len(sentence) > max_length:
+                    words = sentence.split(' ')
+                    current_sentence = ""
+                    
+                    for word in words:
+                        # If the word itself is too long, we need to split it by characters
+                        if len(word) > max_length - 10:  # Leave some room for continuation markers
+                            if current_sentence:
+                                chunks.append(current_sentence)
+                                current_sentence = ""
+                            # Split the long word into chunks
+                            for i in range(0, len(word), max_length - 10):
+                                chunk = word[i:i + max_length - 10]
+                                chunks.append(chunk)
+                        else:
+                            # Check if adding this word would exceed the limit
+                            if current_sentence and len(current_sentence) + len(word) + 1 > max_length - 10:
+                                chunks.append(current_sentence)
+                                current_sentence = word
+                            else:
+                                if current_sentence:
+                                    current_sentence += ' ' + word
+                                else:
+                                    current_sentence = word
+                    
+                    if current_sentence:
+                        chunks.append(current_sentence)
+                else:
+                    # Check if we can add this sentence to the current chunk
+                    if current_chunk and len(current_chunk) + len(sentence) + 2 <= max_length:
+                        current_chunk += '\n\n' + sentence if current_chunk else sentence
+                    else:
+                        if current_chunk:
+                            chunks.append(current_chunk)
+                        current_chunk = sentence
+            
+            # Add any remaining content in current_chunk
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
         else:
-            current_chunk += ('\n\n' if current_chunk else '') + paragraph
+            # Check if we can add this paragraph to the current chunk
+            if current_chunk and len(current_chunk) + len(paragraph) + 2 <= max_length:
+                current_chunk += '\n\n' + paragraph if current_chunk else paragraph
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = paragraph
     
     # Add the last chunk if it's not empty
     if current_chunk:
         chunks.append(current_chunk)
     
-    # Send all chunks
+    # Send all chunks with continuation markers
     for i, chunk in enumerate(chunks):
         if i > 0:  # For continuation messages
             chunk = f"(continued from previous message)\n\n{chunk}"
+        if i < len(chunks) - 1:  # For all but the last message
+            chunk = chunk.rstrip('.,!?') + '...'
         await destination.send(chunk, **kwargs)
 
 # Initialize bot
