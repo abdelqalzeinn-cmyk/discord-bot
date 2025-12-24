@@ -481,6 +481,33 @@ async def generate_image(ctx, *, prompt: str):
         print(f"Image generation error: {error_msg}")
         await ctx.send(f"Sorry, I couldn't generate that image. Error: {error_msg[:150]}")
 
+@bot.command(name='freeimage')
+@is_allowed_channel()
+async def free_image_search(ctx, *, query: str):
+    """Search for free images on Unsplash"""
+    try:
+        async with ctx.typing():
+            # Use Unsplash's public API (no key required for basic search)
+            url = f"https://source.unsplash.com/random/800x600/?{query}"
+            
+            # Create embed
+            embed = discord.Embed(
+                title=f"Image search: {query}",
+                color=discord.Color.blue(),
+                url=f"https://unsplash.com/s/photos/{query.replace(' ', '-')}"
+            )
+            embed.set_image(url=url)
+            embed.set_footer(
+                text="Powered by Unsplash • Images are free to use under the Unsplash License",
+                icon_url="https://unsplash.com/favicon.ico"
+            )
+            
+            await ctx.send(embed=embed)
+            
+    except Exception as e:
+        await ctx.send(f"Sorry, I couldn't find any images. Error: {str(e)[:150]}")
+        print(f"Free image search error: {e}")
+
 @bot.command(name='trivia')
 async def trivia(ctx, category: str = None):
     """Get a random trivia question with interactive buttons!"""
