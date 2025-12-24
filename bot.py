@@ -438,97 +438,163 @@ async def help_command(ctx):
 @bot.command(name='generate')
 @is_allowed_channel()
 async def generate_image(ctx, *, prompt: str):
-    """Generate an image using Stable Horde's free AI image generation"""
+    """Generate an image using Stable Horde's free AI image generation
+    
+    Example: !generate a beautiful sunset over mountains
+    """
+    # Input validation
+    if len(prompt) < 5:
+        return await ctx.send("❌ Please provide a more detailed prompt (at least 5 characters).")
+    if len(prompt) > 500:
+        return await ctx.send("❌ Prompt is too long. Please keep it under 500 characters.")
+    
+    status_msg = await ctx.send("🖌️ Generating your image... This may take 1-2 minutes.")
+    
     try:
         async with ctx.typing():
-            # Stable Horde API endpoint
-            api_url = "https://stablehorde.net/api/v2/generate/async"
+            # Load environment variables
+            load_dotenv()
             
-            # Request payload
+            # Stable Horde API configuration
+            api_url = "https://stablehorde.net/api/v2/generate/async"
+            api_key = os.getenv('STABLE_HORDE_API_KEY', '0000000000')  # Default to anonymous key if not set
+            
+            # Request payload with optimized settings for faster generation
             payload = {
-                "prompt": f"{prompt} ### bad anatomy, bad hands, blurry, low quality",
+                "prompt": f"{prompt} ### bad anatomy, bad hands, blurry, low quality, text, watermark, signature, username, artist name",
                 "params": {
                     "width": 512,
                     "height": 512,
-                    "steps": 30,
+                    "steps": 25,  # Reduced from 30 for faster generation
                     "n": 1,
-                    "sampler_name": "k_euler",
+                    "sampler_name": "k_euler_a",  # Better quality than k_euler
                     "cfg_scale": 7.5,
                     "karras": True,
-                    "hires_fix": False
+                    "hires_fix": False,
+                    "denoising_strength": 0.7
                 },
                 "nsfw": False,
                 "trusted_workers": False,
                 "models": ["SDXL 1.0"],
-                "r2": True
+                "r2": True,
+                "shared": True  # Share the generated image with the community
             }
             
             headers = {
-                "apikey": "0000000000",  # Anonymous key
-                "Client-Agent": "DiscordBot:1.0:github.com/yourusername/yourrepo",
+                "apikey": api_key,
+                "Client-Agent": f"DiscordBot:1.0:github.com/username/repo (contact@example.com)",
                 "Content-Type": "application/json"
             }
             
             # Submit the generation request
             async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, json=payload, headers=headers) as response:
-                    if response.status == 202:  # Accepted
-                        result = await response.json()
-                        request_id = result.get('id')
-                        
-                        if not request_id:
-                            return await ctx.send("❌ Failed to start image generation. Please try again.")
-                        
-                        # Check status until completion
-                        status_url = f"https://stablehorde.net/api/v2/generate/status/{request_id}"
-                        check_attempts = 0
-                        max_attempts = 30  # 30 attempts * 10 seconds = 5 minutes max
-                        
-                        while check_attempts < max_attempts:
-                            await asyncio.sleep(10)  # Wait 10 seconds between checks
-                            check_attempts += 1
+                try:
+                    # Update status
+                    await status_msg.edit(content="🖌️ Starting image generation... (This may take 1-2 minutes)")
+                    
+                    # Make the API request
+                    async with session.post(api_url, json=payload, headers=headers) as response:
+                        if response.status == 202:  # Accepted
+                            result = await response.json()
+                            request_id = result.get('id')
                             
-                            async with session.get(status_url, headers=headers) as status_response:
-                                status = await status_response.json()
+                            if not request_id:
+                                return await status_msg.edit(content="❌ Failed to start image generation. Please try again.")
+                            
+                            # Check status until completion
+                            status_url = f"https://stablehorde.net/api/v2/generate/status/{request_id}"
+                            check_attempts = 0
+                            max_attempts = 36  # 36 attempts * 10 seconds = 6 minutes max
+                            last_status = ""
+                            
+                            while check_attempts < max_attempts:
+                                await asyncio.sleep(10)  # Wait 10 seconds between checks
+                                check_attempts += 1
                                 
-                                if status.get('done', False):
-                                    # Download the generated image
-                                    if status.get('generations') and len(status['generations']) > 0:
-                                        image_url = status['generations'][0].get('img')
-                                        if image_url:
-                                            async with session.get(image_url) as img_response:
-                                                if img_response.status == 200:
-                                                    image_data = await img_response.read()
-                                                    with open("temp_img.png", "wb") as f:
-                                                        f.write(image_data)
+                                try:
+                                    async with session.get(status_url, headers=headers, timeout=30) as status_response:
+                                        if status_response.status != 200:
+                                            continue
+                                            
+                                        status = await status_response.json()
+                                        
+                                        # Update status message with progress
+                                        if 'waiting' in status:
+                                            queue_pos = status.get('waiting', 0)
+                                            new_status = f"🖌️ Your image is in queue (position: {queue_pos})..."
+                                        elif 'processing' in status and status['processing'] > 0:
+                                            new_status = "🎨 Generating your image... (This may take a few more moments)"
+                                        else:
+                                            new_status = "⏳ Image generation in progress..."
+                                            
+                                        if new_status != last_status:
+                                            await status_msg.edit(content=new_status)
+                                            last_status = new_status
+                                        
+                                        if status.get('done', False):
+                                            # Download the generated image
+                                            if status.get('generations') and len(status['generations']) > 0:
+                                                image_url = status['generations'][0].get('img')
+                                                if image_url:
+                                                    await status_msg.edit(content="🖼️ Image ready! Downloading...")
                                                     
-                                                    with open("temp_img.png", "rb") as f:
-                                                        await ctx.send(
-                                                            f"**Generated:** {prompt}",
-                                                            file=discord.File(f, filename="generated.png")
-                                                        )
-                                                    
-                                                    # Clean up
-                                                    try:
-                                                        os.remove("temp_img.png")
-                                                    except:
-                                                        pass
-                                                    return
-                                    
-                                    return await ctx.send("❌ Failed to retrieve the generated image.")
+                                                    async with session.get(image_url, timeout=60) as img_response:
+                                                        if img_response.status == 200:
+                                                            image_data = await img_response.read()
+                                                            temp_file = f"temp_img_{request_id}.png"
+                                                            
+                                                            with open(temp_file, "wb") as f:
+                                                                f.write(image_data)
+                                                            
+                                                            with open(temp_file, "rb") as f:
+                                                                await ctx.send(
+                                                                    f"🎨 **Generated:** {prompt}",
+                                                                    file=discord.File(f, filename=f"generated_{request_id[:6]}.png")
+                                                                )
+                                                            
+                                                            # Clean up
+                                                            try:
+                                                                os.remove(temp_file)
+                                                                await status_msg.delete()
+                                                            except:
+                                                                pass
+                                                            return
+                                                        else:
+                                                            await status_msg.edit(content="❌ Failed to download the generated image.")
+                                                            return
+                                            
+                                            await status_msg.edit(content="❌ Failed to retrieve the generated image.")
+                                            return
+                                        
+                                        if status.get('faulted'):
+                                            await status_msg.edit(content="❌ Image generation failed. The service might be busy. Please try again later.")
+                                            return
                                 
-                                if status.get('faulted'):
-                                    return await ctx.send("❌ Image generation failed. Please try again later.")
-                        
-                        await ctx.send("❌ Image generation is taking too long. Please try again later.")
-                        
-                    else:
-                        error = await response.text()
-                        await ctx.send(f"❌ Error: {error[:150]}")
+                                except asyncio.TimeoutError:
+                                    continue  # Just try again on timeout
+                                except Exception as e:
+                                    print(f"Status check error: {str(e)}")
+                                    continue
+                            
+                            await status_msg.edit(content="❌ Image generation is taking too long. The service might be overloaded. Please try again later.")
+                            
+                        else:
+                            error_text = await response.text()
+                            print(f"API Error ({response.status}): {error_text}")
+                            await status_msg.edit(content=f"❌ Error from image generation service: {response.status} - {error_text[:100]}")
+                
+                except asyncio.TimeoutError:
+                    await status_msg.edit(content=" Request timed out. The service might be busy. Please try again later.")
+                except Exception as e:
+                    print(f"Unexpected error in generate_image: {str(e)}")
+                    await status_msg.edit(content=" An unexpected error occurred. Please try again later.")
     
     except Exception as e:
-        print(f"Image generation error: {str(e)}")
-        await ctx.send("❌ Sorry, I couldn't generate that image. Please try again later.")
+        print(f"Error in generate_image: {str(e)}")
+        try:
+            await status_msg.edit(content=f" An error occurred: {str(e)[:100]}")
+        except:
+            await ctx.send(" An error occurred while generating the image.")
 
 @bot.command(name='say')
 @commands.has_permissions(administrator=True)  # Only allow admins to use this command
@@ -565,38 +631,38 @@ async def say_error(ctx, error):
         await ctx.send("❌ Channel not found. Please mention a valid text channel.", delete_after=10)
     else:
         await ctx.send(f"❌ An error occurred: {error}", delete_after=10)
-        
+
 @bot.command(name='echo')
-@commands.has_permissions(manage_messages=True)  # Requires manage messages permission
 async def echo_message(ctx, *, message: str):
     """
     Make the bot repeat your message in the current channel
     Usage: !echo Your message here
     """
     try:
-        # Delete the command message
-        try:
-            await ctx.message.delete()
-        except:
-            pass  # Ignore if we can't delete the message
+        # Delete the command message if we have permission
+        if ctx.channel.permissions_for(ctx.me).manage_messages:
+            try:
+                await ctx.message.delete()
+            except:
+                pass
+        
+        # Check permissions before sending
+        if not ctx.channel.permissions_for(ctx.author).manage_messages:
+            return await ctx.send("❌ You need 'Manage Messages' permission to use this command.", delete_after=5)
         
         # Send the message
         await ctx.send(message)
         
     except Exception as e:
-        # If something goes wrong, send an error that will be deleted after 10 seconds
+        # If something goes wrong, send an error that will be deleted after 5 seconds
         error_msg = await ctx.send(f"❌ Error: {e}")
-        await asyncio.sleep(10)
-        await error_msg.delete()
+        await asyncio.sleep(5)
+        try:
+            await error_msg.delete()
+        except:
+            pass
 
-@echo_message.error
-async def echo_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ You need the 'Manage Messages' permission to use this command.", delete_after=10)
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("❌ Please provide a message to echo.\nExample: `!echo Hello!`", delete_after=10)
-    else:
-        await ctx.send(f"❌ An error occurred: {error}", delete_after=10)
+
 
 @bot.command(name='trivia')
 async def trivia(ctx, category: str = None):
