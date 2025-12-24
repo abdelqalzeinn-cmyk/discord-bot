@@ -433,14 +433,8 @@ async def help_command(ctx):
         await send_long_message(ctx, full_message)
     except Exception as e:
         print(f"Error in help command: {e}")
-        await send_long_message(ctx, "❌ An error occurred while displaying help. Please try again later.")
-
-# Store active trivia questions
-bot.trivia_questions = {}
-bot.active_games = {}  # Store active games by channel ID
 @bot.command(name='generate')
 @is_allowed_channel()
-@is_allowed_user()
 async def generate_image(ctx, *, prompt: str):
     """Generate an image using Stable Diffusion based on the given prompt"""
     try:
