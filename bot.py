@@ -44,7 +44,8 @@ ALLOWED_CHANNELS = {
 # Users who can use the bot in any channel (add user IDs here)
 ALLOWED_USERS = {
     1304359498919444557,  # Replace with user IDs who can use the bot anywhere
-    1329161792936476683,  # Add more user IDs as needed
+    1329161792936476683,
+    982303576128897104,
 }
 
 def is_allowed_channel():
@@ -441,45 +442,43 @@ bot.active_games = {}  # Store active games by channel ID
 @bot.command(name='generate')
 @is_allowed_channel()
 async def generate_image(ctx, *, prompt: str):
-    """Generate an image using DALL-E based on the given prompt"""
+    """Generate an image using Stable Diffusion based on the given prompt"""
     try:
-        # Check if OpenAI API key is set
-        if not os.getenv('OPENAI_API_KEY'):
-            await ctx.send("Error: OpenAI API key is not set up. Please contact the bot administrator.")
-            return
-
         # Show typing indicator while generating
         async with ctx.typing():
-            # Initialize OpenAI client
-            client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            # Use a free Stable Diffusion API
+            api_url = "https://api.limewire.com/api/image-generation"
+            headers = {
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "prompt": prompt,
+                "aspect_ratio": "1:1"
+            }
             
-            # Generate the image
-            response = client.images.generate(
-                model="dall-e-3",
-                prompt=prompt,
-                size="1024x1024",
-                quality="standard",
-                n=1,
-            )
-
-            # Get the image URL
-            image_url = response.data[0].url
-            
-            # Create an embed to display the image
-            embed = discord.Embed(
-                title=f"Generated Image: {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
-                color=discord.Color.blue()
-            )
-            embed.set_image(url=image_url)
-            embed.set_footer(text=f"Requested by {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
-            
-            # Send the embed with the image
-            await ctx.send(embed=embed)
-            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        image_url = result.get('data', [{}])[0].get('url')
+                        
+                        if image_url:
+                            embed = discord.Embed(
+                                title=f"Generated: {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
+                                color=discord.Color.blue()
+                            )
+                            embed.set_image(url=image_url)
+                            embed.set_footer(text=f"Requested by {ctx.author.display_name}", 
+                                          icon_url=ctx.author.display_avatar.url)
+                            await ctx.send(embed=embed)
+                        else:
+                            await ctx.send("Sorry, I couldn't generate an image. Please try a different prompt.")
+                    else:
+                        await ctx.send("Sorry, the image generation service is currently unavailable. Please try again later.")
+                        
     except Exception as e:
-        error_msg = str(e)
-        print(f"Image generation error: {error_msg}")
-        await ctx.send(f"Sorry, I couldn't generate that image. Error: {error_msg[:150]}")
+        print(f"Image generation error: {str(e)}")
+        await ctx.send("Sorry, I couldn't generate that image. Please try again later.")
 
 @bot.command(name='freeimage')
 @is_allowed_channel()
