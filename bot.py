@@ -105,28 +105,34 @@ async def send_long_message(destination: Union[TextChannel, DMChannel], content:
     current_chunk = ""
     
     for paragraph in paragraphs:
-        # If the paragraph itself is too long, we need to split it further
-        if len(paragraph) > max_length:
-            # Split by sentences first
-            sentences = paragraph.split('. ')
+        # Clean up the paragraph
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+            
+        # If the paragraph is too long, split it by sentences
+        if len(paragraph) > max_length - 10:  # Leave room for continuation markers
+            # Split by common sentence endings
+            import re
+            sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+            
             for sentence in sentences:
-                # Clean up the sentence
                 sentence = sentence.strip()
                 if not sentence:
                     continue
                     
-                # Add period back if it was part of the split
-                if not sentence.endswith('.'):
+                # Ensure sentence ends with punctuation
+                if not re.search(r'[.!?]$', sentence):
                     sentence += '.'
                 
-                # If the sentence is too long, split by words
-                if len(sentence) > max_length:
+                # If sentence is still too long, split by words
+                if len(sentence) > max_length - 10:
                     words = sentence.split(' ')
                     current_sentence = ""
                     
                     for word in words:
-                        # If the word itself is too long, we need to split it by characters
-                        if len(word) > max_length - 10:  # Leave some room for continuation markers
+                        # If word is too long, split by characters
+                        if len(word) > max_length - 10:
                             if current_sentence:
                                 chunks.append(current_sentence)
                                 current_sentence = ""
@@ -140,30 +146,22 @@ async def send_long_message(destination: Union[TextChannel, DMChannel], content:
                                 chunks.append(current_sentence)
                                 current_sentence = word
                             else:
-                                if current_sentence:
-                                    current_sentence += ' ' + word
-                                else:
-                                    current_sentence = word
+                                current_sentence = f"{current_sentence} {word}".strip()
                     
                     if current_sentence:
                         chunks.append(current_sentence)
                 else:
-                    # Check if we can add this sentence to the current chunk
-                    if current_chunk and len(current_chunk) + len(sentence) + 2 <= max_length:
-                        current_chunk += '\n\n' + sentence if current_chunk else sentence
+                    # Add sentence to current chunk if it fits
+                    if current_chunk and len(current_chunk) + len(sentence) + 2 <= max_length - 10:
+                        current_chunk = f"{current_chunk}\n\n{sentence}" if current_chunk else sentence
                     else:
                         if current_chunk:
                             chunks.append(current_chunk)
                         current_chunk = sentence
-            
-            # Add any remaining content in current_chunk
-            if current_chunk:
-                chunks.append(current_chunk)
-                current_chunk = ""
         else:
-            # Check if we can add this paragraph to the current chunk
-            if current_chunk and len(current_chunk) + len(paragraph) + 2 <= max_length:
-                current_chunk += '\n\n' + paragraph if current_chunk else paragraph
+            # Add paragraph to current chunk if it fits
+            if current_chunk and len(current_chunk) + len(paragraph) + 2 <= max_length - 10:
+                current_chunk = f"{current_chunk}\n\n{paragraph}" if current_chunk else paragraph
             else:
                 if current_chunk:
                     chunks.append(current_chunk)
@@ -173,13 +171,31 @@ async def send_long_message(destination: Union[TextChannel, DMChannel], content:
     if current_chunk:
         chunks.append(current_chunk)
     
-    # Send all chunks with continuation markers
+    # Send all chunks with continuation markers and rate limiting
     for i, chunk in enumerate(chunks):
-        if i > 0:  # For continuation messages
-            chunk = f"(continued from previous message)\n\n{chunk}"
-        if i < len(chunks) - 1:  # For all but the last message
-            chunk = chunk.rstrip('.,!?') + '...'
-        await destination.send(chunk, **kwargs)
+        try:
+            # Add continuation message if needed
+            if i > 0:
+                chunk = f"(continued from previous message)\n\n{chunk}"
+            
+            # Add ellipsis if this isn't the last chunk
+            if i < len(chunks) - 1:
+                chunk = chunk.rstrip('.,!?') + '...'
+            
+            # Send the chunk with error handling
+            await destination.send(chunk, **kwargs)
+            
+            # Add a small delay between messages to avoid rate limiting
+            if i < len(chunks) - 1:
+                await asyncio.sleep(0.5)
+                
+        except Exception as e:
+            print(f"Error sending message chunk {i+1}/{len(chunks)}: {e}")
+            # Try to send an error message if we can
+            try:
+                await destination.send(f"Error sending message part {i+1}: {str(e)[:100]}...")
+            except:
+                pass
 
 # Initialize bot
 bot = commands.Bot(command_prefix='!', intents=intents)
