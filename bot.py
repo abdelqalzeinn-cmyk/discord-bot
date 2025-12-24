@@ -13,6 +13,8 @@ from fastapi import FastAPI
 import uvicorn
 from discord.ui import Button, View
 from discord.ext import commands
+from discord import Message, TextChannel, DMChannel
+from typing import Union
 from dotenv import load_dotenv
 from jokes import JOKES
 from typing import Dict, List, Optional
@@ -32,6 +34,43 @@ conversation_history: Dict[int, List[dict]] = {}
 # AFK status storage
 afk_users = {}
 
+# Allowed channels (add your channel IDs here)
+ALLOWED_CHANNELS = {
+    # Everyone can use the bot in these channels
+    1440330105799839856,  # bot-commands channel ID (replace with your actual channel ID)
+}
+
+# Users who can use the bot in any channel (add user IDs here)
+ALLOWED_USERS = {
+    1304359498919444557,  # Replace with user IDs who can use the bot anywhere
+    1329161792936476683,  # Add more user IDs as needed
+}
+
+def is_allowed_channel():
+    """Check if command is used in an allowed channel or by an allowed user"""
+    async def predicate(ctx):
+        # Allow if user is in ALLOWED_USERS
+        if ctx.author.id in ALLOWED_USERS:
+            return True
+            
+        # Allow if in an allowed channel
+        if ctx.channel.id in ALLOWED_CHANNELS:
+            return True
+            
+        # Allow DMs
+        if isinstance(ctx.channel, discord.DMChannel):
+            return True
+            
+        # If we get here, the channel is not allowed
+        allowed_mentions = [f'<#{channel_id}>' for channel_id in ALLOWED_CHANNELS]
+        await ctx.send(
+            f"❌ This command can only be used in these channels: {' '.join(allowed_mentions)}\n"
+            "Or contact an admin to be added to the allowed users list."
+        )
+        return False
+        
+    return commands.check(predicate)
+
 # Maximum number of messages to keep in history
 MAX_HISTORY = 10
 
@@ -42,6 +81,56 @@ def get_history(ctx) -> List[dict]:
             {"role": "system", "content": "You are a helpful assistant."}
         ]
     return conversation_history[ctx.channel.id]
+
+async def send_long_message(destination: Union[TextChannel, DMChannel], content: str, **kwargs):
+    """Helper function to send messages that may exceed Discord's 2000 character limit.
+    
+    Args:
+        destination: The channel or DM to send the message to
+        content: The message content to send
+        **kwargs: Additional arguments to pass to send()
+    """
+    # Discord's message limit is 2000 characters
+    max_length = 2000
+    
+    # If the message is short enough, send it as is
+    if len(content) <= max_length:
+        return await destination.send(content, **kwargs)
+    
+    # Split the message into chunks of max_length characters
+    chunks = []
+    current_chunk = ""
+    
+    # Split by paragraphs first to maintain readability
+    paragraphs = content.split('\n\n')
+    
+    for paragraph in paragraphs:
+        # If adding this paragraph would exceed the max length, finalize current chunk
+        if len(current_chunk) + len(paragraph) + 2 > max_length and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = ""
+        
+        # If a single paragraph is too long, split it by sentences or words
+        if len(paragraph) > max_length:
+            # Try to split by sentences first
+            sentences = paragraph.split('. ')
+            for sentence in sentences:
+                if len(current_chunk) + len(sentence) + 2 > max_length and current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = ""
+                current_chunk += ('. ' if current_chunk and not current_chunk.endswith('.') else '') + sentence
+        else:
+            current_chunk += ('\n\n' if current_chunk else '') + paragraph
+    
+    # Add the last chunk if it's not empty
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    # Send all chunks
+    for i, chunk in enumerate(chunks):
+        if i > 0:  # For continuation messages
+            chunk = f"(continued from previous message)\n\n{chunk}"
+        await destination.send(chunk, **kwargs)
 
 # Initialize bot
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -105,6 +194,44 @@ down_phrases = [
     "i don't know what to do", "i need help", "i need someone to talk to",
     "i feel like a failure", "i'm so disappointed in myself", "i let everyone down"]
 
+async def send_long_message(channel, content: str, max_length: int = 2000):
+    """Helper function to split and send long messages"""
+    if len(content) <= max_length:
+        await channel.send(content)
+        return
+    
+    # Split by double newlines first to try to keep paragraphs together
+    parts = []
+    current_part = ""
+    
+    for paragraph in content.split('\n\n'):
+        if len(current_part) + len(paragraph) + 2 > max_length:
+            if current_part:
+                parts.append(current_part)
+                current_part = ""
+            # If a single paragraph is too long, split by spaces
+            if len(paragraph) > max_length:
+                words = paragraph.split(' ')
+                for word in words:
+                    if len(current_part) + len(word) + 1 > max_length:
+                        if current_part:
+                            parts.append(current_part)
+                            current_part = ""
+                    current_part += (" " if current_part else "") + word
+            else:
+                current_part = paragraph
+        else:
+            current_part += ("\n\n" if current_part else "") + paragraph
+    
+    if current_part:
+        parts.append(current_part)
+    
+    # Send all parts with continuation markers
+    for i, part in enumerate(parts):
+        if i > 0:
+            part = f"(Continued from previous message)\n\n{part}"
+        await channel.send(part)
+
 @bot.event
 async def on_ready():
     """Event that runs when the bot is ready"""
@@ -115,7 +242,7 @@ async def on_ready():
 @bot.command(name='hello')
 async def hello(ctx):
     """Greet the bot"""
-    await ctx.send(random.choice(RESPONSES['hello']))
+    await send_long_message(ctx, random.choice(RESPONSES['hello']))
 
 @bot.command(name='joke')
 async def tell_joke(ctx):
@@ -127,12 +254,12 @@ async def tell_joke(ctx):
                 if response.status == 200:
                     joke_data = await response.json()
                     if 'joke' in joke_data:
-                        await ctx.send(joke_data['joke'])
+                        await send_long_message(ctx, joke_data['joke'])
                     elif 'setup' in joke_data and 'delivery' in joke_data:
-                        await ctx.send(f"{joke_data['setup']}\n\n{joke_data['delivery']}")
+                        await send_long_message(ctx, f"{joke_data['setup']}\n\n{joke_data['delivery']}")
                     else:
                         # Fallback to local jokes if API response is unexpected
-                        await ctx.send(random.choice(JOKES))
+                        await send_long_message(ctx, random.choice(JOKES))
                 else:
                     # Fallback to local jokes if API is down
                     await ctx.send(random.choice(JOKES))
@@ -144,23 +271,23 @@ async def tell_joke(ctx):
 @bot.command(name='quote')
 async def get_quote(ctx):
     """Get a random inspirational quote"""
-    await ctx.send(random.choice(RESPONSES['quote']))
+    await send_long_message(ctx, random.choice(RESPONSES['quote']))
 
 @bot.command(name='time')
 async def get_time(ctx):
     """Get the current time"""
     now = datetime.datetime.now()
-    await ctx.send(f"⏰ The current time is: {now.strftime('%I:%M %p')}")
+    await send_long_message(ctx, f"⏰ The current time is: {now.strftime('%I:%M %p')}")
 
 @bot.command(name='remindme')
 async def set_reminder(ctx, time, *, message):
     """Set a reminder"""
-    await ctx.send(f"⏰ I'll remind you to \"{message}\" in {time}")
+    await send_long_message(ctx, f"⏰ I'll remind you to \"{message}\" in {time}")
 
 @bot.command(name='dontgiveup')
 async def encourage(ctx):
     """Get encouragement when you're feeling down"""
-    await ctx.send(random.choice(RESPONSES['encourage']))
+    await send_long_message(ctx, random.choice(RESPONSES['encourage']))
 
 @bot.command(name='afk')
 async def set_afk(ctx, *, reason: str = "AFK"):
@@ -177,7 +304,7 @@ async def set_afk(ctx, *, reason: str = "AFK"):
             await ctx.author.edit(nick=f"[AFK] {ctx.author.display_name[:26]}")
     except:
         pass  # No permission to change nickname
-    await ctx.send(f"{ctx.author.mention} is now AFK: {reason} 🚶‍♂️")
+    await send_long_message(ctx, f"{ctx.author.mention} is now AFK: {reason} 🚶‍♂️")
 
 @bot.command(name='clear')
 async def clear_history(ctx):
@@ -187,9 +314,9 @@ async def clear_history(ctx):
         conversation_history[ctx.channel.id] = [
             {"role": "system", "content": "You are a helpful assistant."}
         ]
-        await ctx.send("Conversation history cleared! 🧹")
+        await send_long_message(ctx, "Conversation history cleared! 🧹")
     else:
-        await ctx.send("No conversation history to clear.")
+        await send_long_message(ctx, "No conversation history to clear.")
 
 @bot.command(name='helpme', aliases=['cmds', 'commands'])
 async def help_command(ctx):
@@ -237,10 +364,10 @@ async def help_command(ctx):
         if len(full_message) > 2000:
             full_message = full_message[:1996] + "..."
         # Send the message
-        await ctx.send(full_message)
+        await send_long_message(ctx, full_message)
     except Exception as e:
         print(f"Error in help command: {e}")
-        await ctx.send("❌ An error occurred while displaying help. Please try again later.")
+        await send_long_message(ctx, "❌ An error occurred while displaying help. Please try again later.")
 
 # Store active trivia questions
 bot.trivia_questions = {}
@@ -337,10 +464,10 @@ async def trivia(ctx, category: str = None):
                                     )
                         # Send the question with buttons
                         view = TriviaView(correct_answer, answers, question, category_name, difficulty_emoji)
-                        await ctx.send(f"**{category_name}** - {difficulty_emoji}\n{question}", view=view)
+                        await send_long_message(ctx, f"**{category_name}** - {difficulty_emoji}\n{question}", view=view)
     except Exception as e:
         print(f"Error fetching trivia question: {e}")
-        await ctx.send("❌ An error occurred while fetching the trivia question. Please try again later.")
+        await send_long_message(ctx, "❌ An error occurred while fetching the trivia question. Please try again later.")
 
 class RPSView(discord.ui.View):
     def __init__(self):
@@ -387,14 +514,14 @@ class RPSView(discord.ui.View):
 async def rock_paper_scissors(ctx):
     """Play Rock-Paper-Scissors with the bot"""
     view = RPSView()
-    view.message = await ctx.send("Choose your move:", view=view)
+    view.message = await send_long_message(ctx, "Choose your move:", view=view)
 
 @bot.command()
 async def hangman(ctx):
     """Start a game of Hangman"""
     channel_id = ctx.channel.id
     if channel_id in bot.active_games and isinstance(bot.active_games[channel_id], HangmanGame):
-        await ctx.send("There's already an active Hangman game in this channel!")
+        await send_long_message(ctx, "There's already an active Hangman game in this channel!")
         return
     
     word = random.choice(HANGMAN_WORDS)
@@ -532,7 +659,7 @@ class HangmanView(discord.ui.View):
 @bot.command(name='guess_letter')
 async def guess_letter(ctx, letter: str):
     """This command is no longer used. Please use the buttons in the Hangman game interface to guess letters."""
-    await ctx.send("Please use the buttons in the Hangman game interface to guess letters.")
+    await send_long_message(ctx, "Please use the buttons in the Hangman game interface to guess letters.")
     # Try to resend the current game state if it exists
     channel_id = ctx.channel.id
     if channel_id in bot.active_games and isinstance(bot.active_games[channel_id], HangmanGame):
@@ -545,11 +672,12 @@ async def guess_letter(ctx, letter: str):
         )
 
 @bot.command(name='quiz')
+@is_allowed_channel()
 async def start_quiz(ctx):
     """Start a new quiz game"""
     channel_id = ctx.channel.id
     if channel_id in bot.active_games and isinstance(bot.active_games[channel_id], QuizGame):
-        await ctx.send("There's already an active quiz in this channel!")
+        await send_long_message(ctx, "There's already an active quiz in this channel!")
         return
     
     # Create a copy of the questions to avoid modifying the original list
@@ -564,7 +692,7 @@ async def ask_quiz_question(ctx, game):
     question = game.get_new_question()
     
     if not question:
-        await ctx.send("No more questions! Thanks for playing!")
+        await send_long_message(ctx, "No more questions! Thanks for playing!")
         return
     
     # Get options and shuffle them if they exist, otherwise use just the answer
@@ -595,6 +723,7 @@ async def ask_quiz_question(ctx, game):
     )
 
 @bot.command(name='answer')
+@is_allowed_channel()
 async def answer_question(ctx, *, user_answer: str):
     """Answer the current quiz question"""
     channel_id = ctx.channel.id
@@ -606,19 +735,19 @@ async def answer_question(ctx, *, user_answer: str):
            isinstance(bot.active_games[channel_id], QuizGame):
             game = bot.active_games[channel_id]
             is_correct, message = game.check_answer(user_answer)
-            await ctx.send(message)
+            await send_long_message(ctx, message)
             
             # Ask next question or end game
             if len(game.questions) > 0:
                 await asyncio.sleep(2)  # Short delay before next question
                 await ask_quiz_question(ctx, game)
-                await ctx.send("Type your answer or the letter of your choice (A, B, C, or D)!")
+                await send_long_message(ctx, "Type your answer or the letter of your choice (A, B, C, or D)!")
             else:
-                await ctx.send(f"🎉 Quiz complete! Your score: {game.score}/{game.total_questions}")
+                await send_long_message(ctx, f"🎉 Quiz complete! Your score: {game.score}/{game.total_questions}")
                 if channel_id in bot.active_games:
                     del bot.active_games[channel_id]
         else:
-            await ctx.send("No active quiz! Start one with `!quiz`")
+            await send_long_message(ctx, "No active quiz! Start one with `!quiz`")
         return
     
     # Handle regular answer command
@@ -638,12 +767,13 @@ async def answer_question(ctx, *, user_answer: str):
             del bot.active_games[channel_id]
 
 @bot.command(name='stop')
+@is_allowed_channel()
 async def stop_game(ctx):
     """Stop the current game in this channel"""
     channel_id = ctx.channel.id
     
     if channel_id not in bot.active_games:
-        await ctx.send("There's no active game to stop in this channel!")
+        await send_long_message(ctx, "There's no active game to stop in this channel!")
         return
     
     # Get the game and clean up
@@ -652,13 +782,13 @@ async def stop_game(ctx):
     
     # Send appropriate message based on game type
     if isinstance(game, HangmanGame):
-        await ctx.send(f"⏹️ Hangman game stopped. The word was: **{game.word}**")
+        await send_long_message(ctx, f"⏹️ Hangman game stopped. The word was: **{game.word}**")
     elif isinstance(game, QuizGame):
-        await ctx.send(f"⏹️ Quiz stopped. Your final score was: {game.score}/{game.question_number-1}")
+        await send_long_message(ctx, f"⏹️ Quiz stopped. Your final score was: {game.score}/{game.question_number-1}")
     elif isinstance(game, TicTacToeGame):
-        await ctx.send("⏹️ Tic Tac Toe game stopped.")
+        await send_long_message(ctx, "⏹️ Tic Tac Toe game stopped.")
     else:
-        await ctx.send("⏹️ Game stopped.")
+        await send_long_message(ctx, "⏹️ Game stopped.")
 
 class TicTacToeView(discord.ui.View):
     def __init__(self, game, channel_id):
@@ -770,25 +900,73 @@ class TicTacToeView(discord.ui.View):
         self.stop()  # Stop the view
 
 @bot.command(name='tictactoe', aliases=['ttt'])
-async def tictactoe(ctx, opponent: discord.Member = None):
-    """Start a Tic Tac Toe game with another user"""
+@is_allowed_channel()
+async def tictactoe(ctx, opponent: discord.Member = None, difficulty: str = 'medium'):
+    """Start a Tic Tac Toe game
+    
+    Examples:
+    !tictactoe @username - Play against another user
+    !tictactoe bot - Play against the AI (medium difficulty)
+    !tictactoe bot easy - Play against an easy AI
+    !tictactoe bot medium - Play against a medium AI
+    !tictactoe bot hard - Play against a hard AI
+    """
+    # Handle playing against the bot
+    if opponent and (opponent.bot or str(opponent).lower() == 'bot'):
+        difficulty = difficulty.lower()
+        if difficulty not in ['easy', 'medium', 'hard']:
+            difficulty = 'medium'
+        
+        channel_id = ctx.channel.id
+        
+        # Check if there's already a game in this channel
+        if channel_id in bot.active_games:
+            await send_long_message(ctx, "There's already an active game in this channel! Use `!stop` to end it first.")
+            return
+        
+        # Create and store the game with AI
+        game = TicTacToeGame(ctx.author, difficulty=difficulty)
+        bot.active_games[channel_id] = game
+        
+        # Create the view with buttons
+        view = TicTacToeView(game, channel_id)
+        
+        # Send initial game board
+        board = game.get_board_display()
+        message = await send_long_message(ctx, 
+            f"🎮 **Tic Tac Toe** 🎮 (vs AI - {difficulty.capitalize()})\n"
+            f"{ctx.author.mention} (❌) vs 🤖 Bot (⭕)\n"
+            f"It's {ctx.author.mention}'s turn! (❌)\n\n"
+            f"**How to play:**\n"
+            f"Click the 'Make Move' button and enter a number (1-9).\n"
+            f"Positions are numbered from left to right, top to bottom.\n\n"
+            f"{board}",
+            view=view
+        )
+        view.message = message
+        return
+        
+    # Handle playing against another user
     if opponent is None:
-        await ctx.send("Please mention a user to play against! Example: `!tictactoe @username`")
+        await send_long_message(
+            ctx,
+            "Please specify an opponent or 'bot' to play against the AI.\n"
+            "Examples:\n"
+            "`!tictactoe @username` - Play against a user\n"
+            "`!tictactoe bot` - Play against the AI (medium difficulty)\n"
+            "`!tictactoe bot easy` - Play against an easy AI"
+        )
         return
         
     if opponent == ctx.author:
-        await ctx.send("You can't play against yourself!")
-        return
-        
-    if opponent.bot:
-        await ctx.send("You can't play against a bot!")
+        await send_long_message(ctx, "You can't play against yourself! Try `!tictactoe bot` to play against the AI.")
         return
         
     channel_id = ctx.channel.id
     
     # Check if there's already a game in this channel
     if channel_id in bot.active_games:
-        await ctx.send("There's already an active game in this channel! Use `!stop` to end it first.")
+        await send_long_message(ctx, "There's already an active game in this channel! Use `!stop` to end it first.")
         return
     
     # Create and store the game
@@ -800,7 +978,7 @@ async def tictactoe(ctx, opponent: discord.Member = None):
     
     # Send initial game board
     board = game.get_board_display()
-    message = await ctx.send(
+    message = await send_long_message(ctx, 
         f"🎮 **Tic Tac Toe** 🎮\n"
         f"{ctx.author.mention} (❌) vs {opponent.mention} (⭕)\n"
         f"It's {ctx.author.mention}'s turn! (❌)\n\n"
@@ -813,6 +991,7 @@ async def tictactoe(ctx, opponent: discord.Member = None):
     view.message = message
 
 @bot.command(name='listgames')
+@is_allowed_channel()
 async def list_games(ctx):
     """List all available games"""
     embed = discord.Embed(
@@ -854,9 +1033,10 @@ async def list_games(ctx):
         inline=False
     )
     
-    await ctx.send(embed=embed)
+    await send_long_message(ctx, embed=embed)
 
 @bot.command(name='ask')
+@is_allowed_channel()
 async def ask_ai(ctx, *, question):
     """Ask the AI a question with conversation history"""
     try:
@@ -916,7 +1096,7 @@ async def ask_ai(ctx, *, question):
                     # Add a header to subsequent chunks
                     if i > 0:
                         chunk = f"(Continued from previous message)\n\n{chunk}"
-                    await ctx.send(f"🤖 {chunk}")
+                    await send_long_message(ctx, chunk)
                 except Exception as e:
                     print(f"Error sending message chunk {i+1}: {e}")
                     continue
@@ -948,11 +1128,7 @@ async def on_message(message):
             pass  # No permission to change nickname
         
         # Send welcome back message
-        await message.channel.send(
-            f"Welcome back {message.author.mention}! "
-            f"You were AFK for {str(time_afk).split('.')[0]}. "
-            f"(Reason: {afk_data['reason']})"
-        )
+        await send_long_message(message.channel, f"Welcome back {message.author.mention}! You were AFK for {str(time_afk).split('.')[0]}. (Reason: {afk_data['reason']})")
     
     # Process commands
     await bot.process_commands(message)
@@ -976,7 +1152,7 @@ async def on_message(message):
             
             if answer == trivia_data['correct']:
                 await message.add_reaction('✅')
-                await message.reply(f"🎉 Correct! The answer was: **{trivia_data['answer']}**", mention_author=False)
+                await send_long_message(message.channel, f"🎉 Correct! The answer was: **{trivia_data['answer']}**")
             else:
                 await message.add_reaction('❌')
                 await message.reply(
@@ -1000,11 +1176,7 @@ async def on_message(message):
             afk_data = afk_users[mention.id]
             afk_time = datetime.datetime.now() - afk_data['time']
             
-            await message.reply(
-                f"{mention.display_name} is AFK: {afk_data['reason']} "
-                f"(for {str(afk_time).split('.')[0]} ago)",
-                mention_author=False
-            )
+            await send_long_message(message.channel, f"{mention.display_name} is AFK: {afk_data['reason']} (for {str(afk_time).split('.')[0]} ago)")
     
     # Check if this is a reply to the bot's message
     is_reply_to_bot = (
@@ -1029,17 +1201,17 @@ async def on_message(message):
                 await ask_ai(ctx, question=content or message.content)
             else:
                 # If just mentioned without a message, send a greeting
-                await message.reply(random.choice(RESPONSES['hello']), mention_author=False)
+                await send_long_message(message.channel, random.choice(RESPONSES['hello']))
             return
         except Exception as e:
             print(f"Error handling message: {e}")
-            await message.reply("Sorry, I encountered an error processing your message. Please try again!", mention_author=False)
+            await send_long_message(message.channel, "Sorry, I encountered an error processing your message. Please try again!")
             return
     
     # Check for emotional support phrases in regular messages
     content_lower = message.content.lower()
     if any(phrase in content_lower for phrase in down_phrases):
-        await message.reply(random.choice(RESPONSES['encourage']), mention_author=False)
+        await send_long_message(message.channel, random.choice(RESPONSES['encourage']))
 
 def get_response(message):
     """Get a response based on the message content"""
@@ -1068,7 +1240,6 @@ def get_response(message):
 
 # Create the FastAPI app
 app = FastAPI()
-
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {"status": "ok"}
@@ -1102,5 +1273,3 @@ if __name__ == "__main__":
     
     # 3. Now run the bot
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
-
-
