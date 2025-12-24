@@ -450,19 +450,20 @@ async def generate_image(ctx, *, prompt: str):
 
         # Show typing indicator while generating
         async with ctx.typing():
-            # Set up OpenAI API key
-            openai.api_key = os.getenv('OPENAI_API_KEY')
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
             
             # Generate the image
-            response = openai.Image.create(
+            response = client.images.generate(
+                model="dall-e-3",
                 prompt=prompt,
-                n=1,
                 size="1024x1024",
-                quality="standard"
+                quality="standard",
+                n=1,
             )
 
             # Get the image URL
-            image_url = response['data'][0]['url']
+            image_url = response.data[0].url
             
             # Create an embed to display the image
             embed = discord.Embed(
