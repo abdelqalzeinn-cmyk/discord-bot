@@ -4,6 +4,7 @@ import datetime
 import discord
 import aiohttp
 import cohere
+import openai
 import asyncio
 import html
 import json
@@ -114,7 +115,6 @@ async def send_long_message(destination: Union[TextChannel, DMChannel], content:
         if len(paragraph) > max_length - 10:  # Leave room for continuation markers
             # Split by common sentence endings
             import re
-            sentences = re.split(r'(?<=[.!?])\s+', paragraph)
             
             for sentence in sentences:
                 sentence = sentence.strip()
@@ -437,6 +437,49 @@ async def help_command(ctx):
 # Store active trivia questions
 bot.trivia_questions = {}
 bot.active_games = {}  # Store active games by channel ID
+
+@bot.command(name='generate')
+@is_allowed_channel()
+async def generate_image(ctx, *, prompt: str):
+    """Generate an image using DALL-E based on the given prompt"""
+    try:
+        # Check if OpenAI API key is set
+        if not os.getenv('OPENAI_API_KEY'):
+            await ctx.send("Error: OpenAI API key is not set up. Please contact the bot administrator.")
+            return
+
+        # Show typing indicator while generating
+        async with ctx.typing():
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            
+            # Generate the image
+            response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size="1024x1024",
+                quality="standard",
+                n=1,
+            )
+
+            # Get the image URL
+            image_url = response.data[0].url
+            
+            # Create an embed to display the image
+            embed = discord.Embed(
+                title=f"Generated Image: {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
+                color=discord.Color.blue()
+            )
+            embed.set_image(url=image_url)
+            embed.set_footer(text=f"Requested by {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+            
+            # Send the embed with the image
+            await ctx.send(embed=embed)
+            
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Image generation error: {error_msg}")
+        await ctx.send(f"Sorry, I couldn't generate that image. Error: {error_msg[:150]}")
 
 @bot.command(name='trivia')
 async def trivia(ctx, category: str = None):
