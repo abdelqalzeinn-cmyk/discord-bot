@@ -438,9 +438,9 @@ async def help_command(ctx):
 # Store active trivia questions
 bot.trivia_questions = {}
 bot.active_games = {}  # Store active games by channel ID
-
 @bot.command(name='generate')
 @is_allowed_channel()
+@is_allowed_user()
 async def generate_image(ctx, *, prompt: str):
     """Generate an image using Stable Diffusion based on the given prompt"""
     try:
