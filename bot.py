@@ -10,6 +10,7 @@ import html
 import json
 import threading
 import time
+import replicate
 from fastapi import FastAPI
 import uvicorn
 from discord.ui import Button, View
@@ -433,159 +434,57 @@ async def help_command(ctx):
         await send_long_message(ctx, full_message)
     except Exception as e:
         print(f"Error in help command: {e}")
+
 @bot.command(name='generate')
 @is_allowed_channel()
 async def generate_image(ctx, *, prompt: str):
-    """Generate an image using AI based on the given prompt.
-    
-    Uses the Stable Horde API (free, community-run service).
-    No API key required.
-    """
+    """Generate an image using Replicate's Stable Diffusion model"""
     try:
-        # Show typing indicator while generating
         async with ctx.typing():
-            # Get a random worker from the Stable Horde
+            # Configure the model (SDXL 1.0)
+            model = "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b"
+            
+            # Generate the image
+            output = replicate.run(
+                model,
+                input={
+                    "prompt": prompt,
+                    "negative_prompt": "low quality, blurry, text, watermark, signature, extra fingers, mutated hands, poorly drawn hands, poorly drawn face",
+                    "width": 768,
+                    "height": 768,
+                    "num_inference_steps": 30,
+                    "guidance_scale": 7.5
+                }
+            )
+            
+            if not output:
+                return await ctx.send("❌ Failed to generate image. Please try again.")
+            
+            # Download and send the image
             async with aiohttp.ClientSession() as session:
-                # First, find a worker
-                workers_url = "https://stablehorde.net/api/v2/workers"
-                async with session.get(workers_url) as response:
-                    if response.status != 200:
-                        return await ctx.send("❌ Could not find available workers. Please try again later.")
-                    
-                    workers = await response.json()
-                    online_workers = [w for w in workers if w.get("online")]
-                    
-                    if not online_workers:
-                        return await ctx.send("❌ No available workers. The service might be overloaded. Please try again later.")
-                    
-                    # Select a random worker that supports text2img
-                    worker = random.choice(online_workers)
-                    
-                    # Prepare the generation request
-                    gen_url = "https://stablehorde.net/api/v2/generate/async"
-                    payload = {
-                        "prompt": f"{prompt} ### nsfw, low quality, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
-                        "negative_prompt": "nsfw, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
-                        "params": {
-                            "n": 1,
-                            "width": 512,
-                            "height": 512,
-                            "steps": 30,
-                            "cfg_scale": 7.5,
-                            "sampler_name": "k_euler_a",
-                            "karras": True,
-                            "post_processing": ["GFPGAN", "CodeFormers"],
-                        },
-                        "models": worker.get("models", ["stable_diffusion"]),
-                        "r2": False,
-                        "shared": False
-                    }
-                    
-                    # Submit the generation request
-                    headers = {
-                        "Content-Type": "application/json",
-                        "apikey": "0000000000",  # Anonymous usage
-                        "Client-Agent": f"DiscordBot:1.0:{ctx.author.id}"
-                    }
-                    
-                    async with session.post(gen_url, json=payload, headers=headers) as gen_response:
-                        if gen_response.status != 202:
-                            error = await gen_response.text()
-                            return await ctx.send(f"❌ Failed to start generation: {error}")
+                async with session.get(output[0]) as response:
+                    if response.status == 200:
+                        image_data = await response.read()
+                        with open("temp_img.png", "wb") as f:
+                            f.write(image_data)
                         
-                        gen_data = await gen_response.json()
-                        request_id = gen_data.get('id')
+                        with open("temp_img.png", "rb") as f:
+                            await ctx.send(
+                                f"**Generated:** {prompt}",
+                                file=discord.File(f, filename="generated.png")
+                            )
                         
-                        if not request_id:
-                            return await ctx.send("❌ Could not start image generation. Please try again later.")
-                        
-                        # Check generation status
-                        check_url = f"https://stablehorde.net/api/v2/generate/check/{request_id}"
-                        status = "processing"
-                        attempts = 0
-                        max_attempts = 60  # 5 minutes max wait (5s * 60)
-                        
-                        while status == "processing" and attempts < max_attempts:
-                            await asyncio.sleep(5)  # Wait 5 seconds between checks
-                            async with session.get(check_url) as check_response:
-                                if check_response.status == 200:
-                                    check_data = await check_response.json()
-                                    status = check_data.get('done', False)
-                                    if status:
-                                        break
-                            attempts += 1
-                        
-                        if status != "done":
-                            return await ctx.send("❌ Image generation is taking too long. Please try again later.")
-                        
-                        # Get the generated image
-                        result_url = f"https://stablehorde.net/api/v2/generate/status/{request_id}"
-                        async with session.get(result_url) as result_response:
-                            if result_response.status != 200:
-                                return await ctx.send("❌ Failed to retrieve generated image.")
-                            
-                            result_data = await result_response.json()
-                            if not result_data.get('generations'):
-                                return await ctx.send("❌ No images were generated. Please try again.")
-                            
-                            # Download and send the image
-                            for gen in result_data['generations']:
-                                if 'img' in gen:
-                                    try:
-                                        # Decode base64 image
-                                        img_data = base64.b64decode(gen['img'].split(",", 1)[1])
-                                        filename = f"generated_{ctx.message.id}.png"
-                                        with open(filename, "wb") as f:
-                                            f.write(img_data)
-                                        
-                                        with open(filename, "rb") as f:
-                                            file = discord.File(f, filename=filename)
-                                            await ctx.send(
-                                                f"**Generated:** {prompt}\n"
-                                                f"**Model:** {worker.get('name', 'Stable Horde')}",
-                                                file=file
-                                            )
-                                        
-                                        # Clean up
-                                        try:
-                                            os.remove(filename)
-                                        except:
-                                            pass
-                                            
-                                    except Exception as e:
-                                        print(f"Error processing image: {e}")
-                                        await ctx.send("❌ Failed to process the generated image.")
+                        # Clean up
+                        try:
+                            os.remove("temp_img.png")
+                        except:
+                            pass
+                    else:
+                        await ctx.send("❌ Failed to download the generated image.")
     
     except Exception as e:
         print(f"Image generation error: {str(e)}")
         await ctx.send("❌ Sorry, I couldn't generate that image. Please try again later.")
-
-@bot.command(name='freeimage')
-@is_allowed_channel()
-async def free_image_search(ctx, *, query: str):
-    """Search for free images on Unsplash"""
-    try:
-        async with ctx.typing():
-            # Use Unsplash's public API (no key required for basic search)
-            url = f"https://source.unsplash.com/random/800x600/?{query}"
-            
-            # Create embed
-            embed = discord.Embed(
-                title=f"Image search: {query}",
-                color=discord.Color.blue(),
-                url=f"https://unsplash.com/s/photos/{query.replace(' ', '-')}"
-            )
-            embed.set_image(url=url)
-            embed.set_footer(
-                text="Powered by Unsplash • Images are free to use under the Unsplash License",
-                icon_url="https://unsplash.com/favicon.ico"
-            )
-            
-            await ctx.send(embed=embed)
-            
-    except Exception as e:
-        await ctx.send(f"Sorry, I couldn't find any images. Error: {str(e)[:150]}")
-        print(f"Free image search error: {e}")
 
 @bot.command(name='trivia')
 async def trivia(ctx, category: str = None):
