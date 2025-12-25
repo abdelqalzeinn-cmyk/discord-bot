@@ -10,7 +10,10 @@ import html
 import json
 import threading
 import time
-import replicate
+import io
+import contextlib
+import textwrap
+import traceback
 from fastapi import FastAPI
 import uvicorn
 from discord.ui import Button, View
@@ -43,14 +46,28 @@ ALLOWED_CHANNELS = {
 }
 
 # Users who can use the bot in any channel (add user IDs here)
+# ... (your existing ALLOWED_USERS list)
 ALLOWED_USERS = {
-    1304359498919444557,  # Replace with user IDs who can use the bot anywhere
+    1304359498919444557,
     1329161792936476683,
     982303576128897104,
+}# Only these two IDs can use the terminal command
+
+TERMINAL_ADMINS = {
+    1304359498919444557, # User 1 (You)
+    1329161792936476683  # User 2 (The one you just added)
 }
 
+# --- PASTE THE BANNED WORDS HERE ---
+BANNED_WORDS = [
+    "nsfw", "naked", "porn", "sex", "gore", "blood", "violence", 
+    "r34", "hentai", "undress", "bikini", "lingerie",
+    "penis", "dick", "boobs", "vagina", "pussy", "ass", "nude"
+]
+# -----------------------------------
+
 def is_allowed_channel():
-    """Check if command is used in an allowed channel or by an allowed user"""
+    # ... (rest of your code)
     async def predicate(ctx):
         # Allow if user is in ALLOWED_USERS
         if ctx.author.id in ALLOWED_USERS:
@@ -435,42 +452,66 @@ async def help_command(ctx):
     except Exception as e:
         print(f"Error in help command: {e}")
 
+@bot.command(name='terminal', aliases=['eval', 'exec'])
+async def internal_terminal(ctx, *, body: str):
+    """Runs python code (Restricted to two specific users)"""
+    
+    # Check if the user is one of the two allowed admins
+    if ctx.author.id not in TERMINAL_ADMINS:
+        return await ctx.send("❌ **Restricted:** This command is for authorized terminal admins only.")
+
+    # --- Everything below this stays the same ---
+    if body.startswith('```'):
+        body = '\n'.join(body.split('\n')[1:-1])
+    else:
+        body = body.strip('` \n')
+
+    stdout = io.StringIO()
+    try:
+        env = {'bot': bot, 'ctx': ctx, 'author': ctx.author}
+        env.update(globals())
+        exec_text = f'async def func():\n{textwrap.indent(body, "  ")}'
+        exec(exec_text, env)
+        
+        func = env['func']
+        with contextlib.redirect_stdout(stdout):
+            ret = await func()
+            
+        value = stdout.getvalue()
+        await ctx.send(f"```py\n{value or 'Success (no output)'}```")
+    except Exception:
+        await ctx.send(f"```py\n{traceback.format_exc()}```")
+
 @bot.command(name='generate')
 @is_allowed_channel()
 async def generate_image(ctx, *, prompt: str):
-    """Generates a REAL AI image for free"""
-    # 1. Provide feedback so the user knows the bot is working
-    msg = await ctx.send(f"⏳ Generating `{prompt}`... please wait.")
-    
+    # 1. SAFETY FILTER
+    prompt_check = prompt.lower()
+    if any(word in prompt_check for word in BANNED_WORDS):
+        return await ctx.send("❌ **Safety Block:** That prompt is not allowed.")
+
+    status_msg = await ctx.send(f"⏳ **Generating AI human for:** `{prompt}`...")
+
     try:
         async with ctx.typing():
-            # 2. Prepare the URL (clean up spaces)
-            safe_prompt = prompt.replace(" ", "%20")
-            # We add a random seed so the same prompt can give different results
-            import random
-            seed = random.randint(1, 99999)
-            api_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?seed={seed}&width=512&height=512&nologo=true"
+            # 2. PROMPT FIXER (Forces the AI to focus on 'real human' traits)
+            clean_prompt = f"a photo of a {prompt}, realistic human face, detailed skin, 8k"
+            encoded_prompt = clean_prompt.replace(" ", "%20")
             
-            # 3. Fetch the image data
+            # Using the reliable Pollinations link
+            api_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?nologo=true&safe=true"
+            
             async with aiohttp.ClientSession() as session:
-                async with session.get(api_url) as response:
+                async with session.get(api_url, timeout=30) as response:
                     if response.status == 200:
                         image_data = await response.read()
-                        
-                        # 4. Prepare the file for Discord
                         from io import BytesIO
-                        image_file = BytesIO(image_data)
-                        discord_file = discord.File(image_file, filename="ai_generated.jpg")
-                        
-                        # 5. Send it and delete the "Loading" message
-                        await ctx.send(f"🎨 **AI Result for:** `{prompt}`", file=discord_file)
-                        await msg.delete()
+                        await ctx.send(file=discord.File(BytesIO(image_data), "human.jpg"))
+                        await status_msg.delete() # Cleans up the 'Generating' text
                     else:
-                        await ctx.send("❌ AI Service is busy. Try again in a minute!")
-                        
-    except Exception as e:
-        print(f"Error: {e}")
-        await ctx.send("❌ Something went wrong while drawing that.")
+                        await status_msg.edit(content="❌ AI is currently overloaded.")
+    except Exception:
+        await status_msg.edit(content="❌ Connection error. Try again.")
 
 @bot.command(name='echo')
 async def echo_message(ctx, *, message: str):
