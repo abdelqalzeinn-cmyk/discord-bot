@@ -3,6 +3,7 @@ import random
 import datetime
 import discord
 import aiohttp
+import traceback
 import cohere
 import openai
 import asyncio
@@ -26,8 +27,10 @@ from discord import Message, TextChannel, DMChannel
 from typing import Union
 from dotenv import load_dotenv
 from jokes import JOKES
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from games import HangmanGame, QuizGame, RPSGame, TicTacToeGame, QUIZ_QUESTIONS, HANGMAN_WORDS
+from datetime import datetime, time, timedelta
+
 # Load environment variables
 load_dotenv()
 # Configure Discord intents
@@ -188,6 +191,8 @@ async def send_long_message(destination: Union[TextChannel, DMChannel], content:
                 pass
 # Initialize bot
 bot = commands.Bot(command_prefix='!', intents=intents)
+bot.trivia_questions = {}  # Initialize trivia_questions dictionary
+bot.scheduled_messages = []  # Store scheduled messages
 # Enhanced responses with more context
 RESPONSES = {
     'hello': [
@@ -1073,6 +1078,58 @@ async def list_games(ctx):
         inline=False
     )
     await send_long_message(ctx, embed=embed)
+
+async def get_ai_response(ctx, question):
+    """Get a response from the AI with conversation history"""
+    try:
+        # Get or initialize conversation history for this channel
+        history = get_history(ctx)
+        # Add user's question to history
+        history.append({"role": "user", "content": question})
+        # Keep only the most recent messages (plus system message)
+        if len(history) > MAX_HISTORY + 1:  # +1 for system message
+            history = [history[0]] + history[-(MAX_HISTORY):-1] + [history[-1]]
+        
+        # Initialize the client with your API key
+        co = cohere.ClientV2(api_key=os.getenv('COHERE_API_KEY'))
+        
+        # Make the API call with conversation history
+        response = co.chat(
+            model="command-a-03-2025",
+            messages=history,
+            temperature=0.4,
+            max_tokens=500  # Limit response length
+        )
+        
+        # Extract the text from the response
+        try:
+            if hasattr(response, 'message') and hasattr(response.message, 'content'):
+                if isinstance(response.message.content, list) and len(response.message.content) > 0:
+                    answer = response.message.content[0].text
+                else:
+                    answer = str(response.message.content)
+            else:
+                answer = str(response)
+        except Exception as e:
+            print(f"Error extracting response: {e}")
+            answer = "I'm having trouble understanding that. Could you rephrase your question?"
+        
+        # If answer is still None or empty, use the full response
+        if not answer:
+            answer = "I'm sorry, I couldn't generate a response. Could you try asking something else?"
+            
+        # Add AI's response to history
+        history.append({"role": "assistant", "content": answer})
+        # Update the conversation history
+        conversation_history[ctx.channel.id] = history
+        
+        return answer
+        
+    except Exception as e:
+        error_msg = f"Error in get_ai_response: {str(e)}"
+        print(error_msg)
+        return "I'm having trouble processing your request right now. Please try again later."
+        
 @bot.command(name='ask')
 @is_allowed_channel()
 async def ask_ai(ctx, *, question):
@@ -1141,119 +1198,173 @@ async def on_message(message):
     # Don't respond to ourselves
     if message.author == bot.user:
         return
+
     # Check if user is returning from AFK
     user_id = message.author.id
     if user_id in afk_users:
         afk_data = afk_users.pop(user_id)
         time_afk = datetime.datetime.now() - afk_data['time']
-        # Try to restore original nickname
         try:
             if message.guild:
                 await message.author.edit(nick=afk_data['original_nick'])
         except:
             pass  # No permission to change nickname
-        # Send welcome back message
         await send_long_message(message.channel, f"Welcome back {message.author.mention}! You were AFK for {str(time_afk).split('.')[0]}. (Reason: {afk_data['reason']})")
-    # Process commands
-    await bot.process_commands(message)
+    
     # Don't respond to other bots
     if message.author.bot:
         return
+
+    # Process commands first
+    await bot.process_commands(message)
+
+    # Check if this is a reply to the bot
+    is_reply_to_bot = False
+    referenced_message = None
+    if message.reference:
+        try:
+            print(f"DEBUG: Message is a reply to message ID: {message.reference.message_id}")
+            # Get the referenced message
+            if hasattr(message.reference, 'resolved') and message.reference.resolved:
+                referenced_message = message.reference.resolved
+            elif message.reference.message_id:
+                channel = bot.get_channel(message.reference.channel_id) or message.channel
+                if channel:
+                    try:
+                        referenced_message = await channel.fetch_message(message.reference.message_id)
+                    except discord.NotFound:
+                        print(f"Could not find referenced message {message.reference.message_id}")
+            
+            if referenced_message:
+                print(f"DEBUG: Found referenced message from {referenced_message.author} (Bot: {referenced_message.author == bot.user})")
+                print(f"DEBUG: Referenced message content: {referenced_message.content}")
+                if referenced_message.author.id == bot.user.id:
+                    is_reply_to_bot = True
+                    print("DEBUG: This is a reply to the bot's message")
+        except Exception as e:
+            print(f"Error checking reply: {e}")
+
     # Check if this is an answer to a trivia question
-    if message.reference and message.reference.message_id in bot.trivia_questions:
+    if hasattr(bot, 'trivia_questions') and message.reference and message.reference.message_id in bot.trivia_questions:
         trivia_data = bot.trivia_questions[message.reference.message_id]
-        # Check if the question has expired
         if datetime.datetime.now() > trivia_data['expires']:
             del bot.trivia_questions[message.reference.message_id]
             return
         try:
-            # Try to parse the answer as a number
             answer = int(message.content.strip())
             if answer == trivia_data['correct']:
-                await message.add_reaction('')
+                await message.add_reaction('✅')
                 await send_long_message(message.channel, f" Correct! The answer was: **{trivia_data['answer']}**")
             else:
-                await message.add_reaction('')
+                await message.add_reaction('❌')
                 await message.reply(
                     f"That's not quite right! The correct answer was: **{trivia_data['answer']}**",
                     mention_author=False
                 )
-            # Remove the question since it's been answered
             if message.reference.message_id in bot.trivia_questions:
                 del bot.trivia_questions[message.reference.message_id]
         except ValueError:
-            # If it's not a number, ignore it
             pass
         except Exception as e:
             print(f"Error processing trivia answer: {e}")
-            return
+        return
+
     # Check if someone mentioned an AFK user
     for mention in message.mentions:
         if mention.id in afk_users and mention.id != message.author.id:
             afk_data = afk_users[mention.id]
             afk_time = datetime.datetime.now() - afk_data['time']
             await send_long_message(message.channel, f"{mention.display_name} is AFK: {afk_data['reason']} (for {str(afk_time).split('.')[0]} ago)")
-    # Check if this is a reply to the bot's message
-    is_reply_to_bot = False
-    if message.reference and message.reference.message_id:
-        referenced_message = None
+
+    # Handle messages where the bot is mentioned, it's a DM, or a reply to the bot
+    if (bot.user.mentioned_in(message) or 
+        isinstance(message.channel, discord.DMChannel) or 
+        is_reply_to_bot):
         try:
-            if isinstance(message.reference.resolved, discord.Message):
-                referenced_message = message.reference.resolved
-        except Exception:
-            referenced_message = None
-        if referenced_message is None:
-            try:
-                referenced_message = await message.channel.fetch_message(message.reference.message_id)
-            except Exception:
-                referenced_message = None
-        if referenced_message and referenced_message.author and referenced_message.author.id == bot.user.id:
-            is_reply_to_bot = True
-    # Check if the bot is mentioned, it's a DM, or a reply to the bot
-    if bot.user.mentioned_in(message) or isinstance(message.channel, discord.DMChannel) or is_reply_to_bot:
-        try:
-            # Get the message content without the mention if it exists
+            print(f"DEBUG: Processing message - Type: {type(message).__name__}, Content: '{message.content}'")
+            print(f"DEBUG: is_reply_to_bot: {is_reply_to_bot}, is_mention: {bot.user.mentioned_in(message)}, is_dm: {isinstance(message.channel, discord.DMChannel)}")
+            
+            # Remove bot mention if present
             content = message.content.replace(f'<@{bot.user.id}>', '').strip()
-            # If there's content after the mention or it's a reply
-            if content or is_reply_to_bot:
-                # Create a context for the message
+            
+            # If it's a reply to the bot, get the original message content
+            if is_reply_to_bot and (not content or content.isspace()):
+                try:
+                    print("DEBUG: Processing reply to bot's message")
+                    channel = bot.get_channel(message.reference.channel_id) or message.channel
+                    if channel:
+                        print(f"DEBUG: Fetching referenced message {message.reference.message_id} from channel {channel.id}")
+                        referenced_msg = await channel.fetch_message(message.reference.message_id)
+                        if referenced_msg.author.id == bot.user.id:
+                            # If replying with no content, use the original message's content
+                            if referenced_msg.embeds:
+                                content = referenced_msg.embeds[0].description or ""
+                                print(f"DEBUG: Using embedded content from referenced message: {content}")
+                            else:
+                                content = referenced_msg.content
+                                print(f"DEBUG: Using text content from referenced message: {content}")
+                except Exception as e:
+                    print(f"ERROR: Failed to process reply: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Create a proper context for the message
+            try:
+                import traceback
+                
+                # First try to get the context normally
                 ctx = await bot.get_context(message)
-                # Use the ask_ai function to handle the response with conversation history
-                await ask_ai(ctx, question=content or message.content)
+                
+                # If we don't have a valid command, create a minimal context manually
+                if not ctx.valid:
+                    print("DEBUG: Creating minimal context")
+                    
+                    # Create a simple context without trying to modify valid
+                    ctx = await bot.get_context(message)
+                    
+                    # Create a custom context class that's always valid
+                    class ContextWrapper(discord.ext.commands.Context):
+                        def __init__(self, **kwargs):
+                            super().__init__(**kwargs)
+                            self._valid = True
+                        
+                        @property
+                        def valid(self):
+                            return True
+                    
+                    ctx = ContextWrapper(bot=bot, message=message, view=ctx.view, prefix=bot.command_prefix)
+                
+                print(f"DEBUG: Context created - valid: {getattr(ctx, 'valid', False)}, command: {getattr(ctx, 'command', None)}")
+            except Exception as e:
+                import traceback
+                error_msg = f"Error creating context: {str(e)}\n{traceback.format_exc()}"
+                print(error_msg)
+                await send_long_message(message.channel, "Sorry, I encountered an error processing your message. Please try again!")
+                return
+            
+            print(f"DEBUG: Final content to process: '{content}'")
+            
+            # Use the ask_ai function to handle the response
+            if content or is_reply_to_bot:
+                question = content or message.content
+                print(f"DEBUG: Calling ask_ai with question: '{question}'")
+                await ask_ai(ctx, question=question)
             else:
-                # If just mentioned without a message, send a greeting
+                print("DEBUG: No content to process, sending hello response")
                 await send_long_message(message.channel, random.choice(RESPONSES['hello']))
-            return
+                
         except Exception as e:
-            print(f"Error handling message: {e}")
-            await send_long_message(message.channel, "Sorry, I encountered an error processing your message. Please try again!")
-            return
-    # Check for emotional support phrases in regular messages
-    content_lower = message.content.lower()
-    if any(phrase in content_lower for phrase in down_phrases):
-        await send_long_message(message.channel, random.choice(RESPONSES['encourage']))
-def get_response(message):
-    """Get a response based on the message content"""
-    # Convert to lowercase for case-insensitive matching
-    message_lower = message.lower()
-    original_message = message
-    # Remove any leading/trailing whitespace
-    message = message.strip()
-    # Check for empty message
-    if not message:
-        return None
-    # Check for matching phrases in the message
-    for phrase in RESPONSES:
-        if phrase in message_lower and phrase not in ['joke', 'quote', 'weather', 'remind']:
-            return random.choice(RESPONSES[phrase])
-    # If it's a question
-    if '?' in original_message:
-        return "I'm not sure about that. You can ask me to 'tell me a joke', 'play a game', or 'help' for more options."
-    # Default response if no matches
-    return random.choice(RESPONSES['default'])
-    # --- Place this AFTER your existing imports at the very top of the file ---
-from google import genai
-from google.genai import types
+            import traceback
+            error_msg = f"ERROR in message handling: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
+            try:
+                await send_long_message(message.channel, "Sorry, I encountered an error processing your message. Please try again!")
+            except Exception as send_error:
+                print(f"ERROR sending error message: {send_error}")
+            import traceback
+            traceback.print_exc()
+
+# ... (rest of the code remains the same)
 
 # --- Place this WITH your other global variables (around line 30) ---
 # Initialize Google Client (Use your actual API key)
@@ -1318,13 +1429,136 @@ def run_web():
                 if attempt < max_attempts - 1:
                     print(f"[WEB] Port {port} in use, trying {port + 1}...")
                     continue
+            else:
+                print(f"[WEB] Error starting server on port {port}: {e}")
+                break
+
+@bot.command(name='say')
+@commands.has_permissions(manage_messages=True)
+async def say_message(ctx, *, message: str):
+    """Make the bot say something in the current channel"""
+    try:
+        # Delete the command message first
+        try:
+            await ctx.message.delete()
+        except:
+            pass  # If deletion fails, continue anyway
+        # Then send the message
+        await ctx.send(message)
+    except Exception as e:
+        await ctx.send(f"Failed to send message: {e}", delete_after=10)
+
+@bot.command(name='sayin')
+@commands.has_permissions(manage_messages=True)
+async def say_in_channel(ctx, channel: discord.TextChannel, *, message: str):
+    """Make the bot say something in a specific channel"""
+    try:
+        # Delete the command message first
+        try:
+            await ctx.message.delete()
+        except:
+            pass  # If deletion fails, continue anyway
+        # Then send the message
+        await channel.send(message)
+    except Exception as e:
+        await ctx.send(f"Failed to send message: {e}", delete_after=10)
+
+@bot.command(name='schedule')
+@commands.has_permissions(manage_messages=True)
+async def schedule_message(ctx, when: str, *, message: str):
+    """Schedule a message to be sent later
+    
+    Examples:
+    !schedule 15m Hello in 15 minutes
+    !schedule 1h30m Reminder in 1 hour and 30 minutes
+    !schedule 2d1h5m Big announcement in 2 days, 1 hour, and 5 minutes
+    """
+    try:
+        # Parse time string (e.g., 1h30m, 15m, 2d1h5m)
+        time_units = {'d': 86400, 'h': 3600, 'm': 60, 's': 1}
+        seconds = 0
+        num_str = ''
+        
+        for char in when.lower():
+            if char.isdigit():
+                num_str += char
+            elif char in time_units:
+                if num_str:
+                    seconds += int(num_str) * time_units[char]
+                    num_str = ''
+        
+        if seconds <= 0:
+            await ctx.send("Please specify a valid time (e.g., 15m, 1h30m, 1d12h)")
+            return
+        
+        # Calculate the target time
+        target_time = datetime.now() + timedelta(seconds=seconds)
+        
+        # Add to scheduled messages
+        bot.scheduled_messages.append({
+            'channel_id': ctx.channel.id,
+            'content': message,
+            'time': target_time
+        })
+        
+        await ctx.send(f"✅ Message scheduled for {target_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    except Exception as e:
+        await ctx.send(f"❌ Error scheduling message: {e}")
+
+async def send_scheduled_messages():
+    """Background task to send scheduled messages"""
+    await bot.wait_until_ready()
+    
+    while not bot.is_closed():
+        now = datetime.now()
+        
+        # Check and send scheduled messages
+        for msg in bot.scheduled_messages[:]:
+            if now >= msg['time']:
+                try:
+                    channel = bot.get_channel(msg['channel_id'])
+                    if channel:
+                        await channel.send(msg['content'])
+                    # Remove the sent message from the schedule
+                    bot.scheduled_messages.remove(msg)
+                except Exception as e:
+                    print(f"Error sending scheduled message: {e}")
+        
+        # Sleep for 1 minute before checking again
+        await asyncio.sleep(60)
+
+@bot.event
+async def setup_hook():
+    # Start the scheduled messages task
+    bot.loop.create_task(send_scheduled_messages())
+
+# Create the FastAPI app
+app = FastAPI()
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health():
+    return {"status": "ok"}
+def run_web():
+    # Try multiple ports starting from the configured one
+    base_port = int(os.environ.get("PORT", 10000))
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        port = base_port + attempt
+        try:
+            print(f"[WEB] Starting web server on port {port}...")
+            uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+            break
+        except OSError as e:
+            if "Address already in use" in str(e) or "Only one usage" in str(e):
+                if attempt < max_attempts - 1:
+                    print(f"[WEB] Port {port} in use, trying {port + 1}...")
+                    continue
             print(f"[WEB] Error starting server on port {port}: {e}")
             break
+
 if __name__ == "__main__":
-    # 1. Start web server in background thread FIRST
+    # 1. Start web server in background thread
+    import threading
     threading.Thread(target=run_web, daemon=True).start()
-    # 2. Give the server 2 seconds to breathe
-    import time
-    time.sleep(2)
     
+    # 2. Run the bot with the token from environment variables
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
