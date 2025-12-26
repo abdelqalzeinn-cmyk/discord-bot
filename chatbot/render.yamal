@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: chatbot-web
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 -m uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.9
+
+  - type: worker
+    name: chatbot-worker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.9

@@ -1,0 +1,6 @@
+web: python3 -m uvicorn app:app --host 0.0.0.0 --port $PORT
+<<<<<<< HEAD
+worker: bash start.sh
+=======
+worker: bash start.sh
+>>>>>>> 71be574313c6a352c72e5658a8bffc248098cdcc

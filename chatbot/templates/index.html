@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chat App</title>
+</head>
+<body>
+    <h1>Welcome to the Chat App</h1>
+    <div id="chat-container">
+        <div id="messages"></div>
+        <input type="text" id="message" placeholder="Type your message...">
+        <button id="send">Send</button>
+    </div>
+    <script>
+        document.getElementById('send').addEventListener('click', async () => {
+            const message = document.getElementById('message').value;
+            const response = await fetch('/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ message })
+            });
+            const data = await response.json();
+            const messages = document.getElementById('messages');
+            messages.innerHTML += `<p>You: ${message}</p>`;
+            messages.innerHTML += `<p>Bot: ${data.reply}</p>`;
+            document.getElementById('message').value = '';
+        });
+    </script>
+</body>
+</html>
