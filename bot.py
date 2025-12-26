@@ -16,6 +16,10 @@ import textwrap
 import traceback
 from fastapi import FastAPI
 import uvicorn
+import io
+import discord
+from google import genai
+from google.genai import types
 from discord.ui import Button, View
 from discord.ext import commands
 from discord import Message, TextChannel, DMChannel
@@ -311,6 +315,27 @@ async def tell_joke(ctx):
 async def get_quote(ctx):
     """Get a random inspirational quote"""
     await send_long_message(ctx, random.choice(RESPONSES['quote']))
+@bot.command(name='fact')
+async def get_fact(ctx):
+    """Get a random interesting fact"""
+    facts = [
+        "Honey never spoils. Archaeologists have found pots of honey in ancient Egyptian tombs that are over 3,000 years old and still perfectly edible!",
+        "A single cloud can weigh more than a million pounds.",
+        "There are more stars in the universe than grains of sand on all the Earth's beaches.",
+        "Octopuses have three hearts and blue blood.",
+        "A group of flamingos is called a 'flamboyance'.",
+        "Bananas are berries, but strawberries aren't.",
+        "The human brain uses about 20% of the body's total energy.",
+        "There are more possible games of chess than atoms in the observable universe.",
+        "A day on Venus is longer than a year on Venus.",
+        "Cows have best friends and get stressed when they're separated.",
+        "The Great Wall of China is not visible from space without aid.",
+        "A bolt of lightning contains enough energy to toast 100,000 slices of bread.",
+        "There are more fake flamingos in the world than real ones.",
+        "The shortest war in history was between Britain and Zanzibar in 1896. Zanzibar surrendered after 38 minutes.",
+        "A human's little finger contributes over 50% of the hand's strength."
+    ]
+    await send_long_message(ctx, random.choice(facts))
 @bot.command(name='time')
 async def get_time(ctx):
     """Get the current time"""
@@ -357,35 +382,39 @@ async def help_command(ctx):
     try:
         # Main categories
         categories = {
-            " **Trivia & Games**": [
-                "`!trivia [category]` - Get a random trivia question",
-                "`!rps <rock/paper/scissors>` - Play Rock, Paper, Scissors",
-                "`!hangman` - Start a new Hangman game",
-                "`!quiz` - Take a quiz on various topics (type answers or letters)",
-                "`!tictactoe @user` - Play Tic Tac Toe with a friend",
-                "`!move 1-9` - Make a move in Tic Tac Toe"
-            ],
-            " **Chat & AI**": [
-                "Mention me or reply to my messages to chat!",
-                "`!clear` - Clear conversation history",
-                "`!ask [question]` - Ask me anything"
-            ],
-            " **Utility**": [
-                "`!afk [reason]` - Set AFK status",
-                "`!time` - Show current time",
-                "`!remindme [time] [message]` - Set a reminder"
-            ],
-            " **Fun**": [
-                "`!joke` - Get a random joke",
-                "`!quote` - Get an inspirational quote",
-                "`!fact` - Get a random interesting fact"
-            ],
-            "ℹ **Info**": [
-                "`!helpme`, `!cmds`, or `!commands` - Show this help message"
-            ]
-        }
+    "Trivia & Games": [
+        "`!trivia [category]` - Get a random trivia question",
+        "`!rps <rock/paper/scissors>` - Play Rock, Paper, Scissors",
+        "`!hangman` - Start a new Hangman game",
+        "`!quiz` - Take a quiz on various topics (type answers or letters)",
+        "`!tictactoe @user` - Play Tic Tac Toe with a friend",
+        "`!move 1-9` - Make a move in Tic Tac Toe"
+    ],
+    "Chat & AI": [
+        "Mention me or reply to my messages to chat!",
+        "`!clear` - Clear conversation history",
+        "`!ask [question]` - Ask me anything",
+        "`!generate [prompt]` - Generate an image (Allowed users only)"
+    ],
+    "Utility": [
+        "`!afk [reason]` - Set AFK status",
+        "`!time` - Show current time",
+        "`!remindme [time] [message]` - Set a reminder",
+        "`!reload` - Reload the bot (Admin only)",
+        "`!echo [message]` - Make the bot repeat your message"
+    ],
+    "Fun": [
+        "`!joke` - Get a random joke",
+        "`!quote` - Get an inspirational quote",
+        "`!fact` - Get a random interesting fact"
+    ],
+    "Info": [
+        "`!helpme`, `!cmds`, or `!commands` - Show this help message"
+    ]
+}
+        # Rest of the function...
         # Build the help message
-        help_text = [" **Bot Commands**\n*Type a command for more info*"]
+        help_text = ["Bot Commands\n*Type a command for more info*"]
         # Add each category with its commands
         for category, commands in categories.items():
             help_text.append(f"\n\n{category}")
@@ -437,62 +466,6 @@ async def internal_terminal(ctx, *, body: str):
         await ctx.send(f"```py\n{value or 'Success (no output)'}```")
     except Exception:
         await ctx.send(f"```py\n{traceback.format_exc()}```")
-@bot.command(name='generate')
-@is_allowed_channel()
-async def generate_image(ctx, *, prompt: str):
-    prompt_check = prompt.lower()
-    if any(word in prompt_check for word in BANNED_WORDS):
-        return await ctx.send(" **Safety Block:** That prompt is not allowed.")
-    
-    status_msg = await ctx.send(f" Generating...")
-    
-    # Try primary API first
-    try:
-        async with ctx.typing():
-            # Enhance all prompts with professional photography terms for better results
-            enhanced_prompt = f"{prompt}, professional photography, high resolution, detailed, studio lighting, photorealistic, high quality"
-            
-            encoded_prompt = enhanced_prompt.replace(" ", "%20")
-            print(f"Original prompt: {prompt}")
-            print(f"Enhanced prompt: {enhanced_prompt}")
-            
-            # Use a simple working placeholder - most reliable option
-            api_url = f"https://via.placeholder.com/400x300.png/000000/FFFFFF?text={prompt.replace(' ', '+')}"
-            
-            print(f"Using API: {api_url}")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(api_url, timeout=30) as response:
-                    if response.status == 200:
-                        image_data = await response.read()
-                        await ctx.send(file=discord.File(io.BytesIO(image_data), "generated.jpg"))
-                        await status_msg.delete()
-                        return
-                    else:
-                        api_name = "Picsum" if any(word in prompt.lower() for word in ['person', 'human', 'face', 'portrait', 'man', 'woman', 'people', 'cristiano ronaldo', 'messi', 'ronaldo', 'neymar', 'mbappe', 'celebrity']) else "Pollinations"
-                        print(f"{api_name} failed with status {response.status}: {await response.text()}")
-            
-            await status_msg.edit(content=" Primary API failed. Trying backup...")
-    except Exception as e:
-        print(f"Primary API failed: {e}")
-    
-    # Fallback to different API
-    try:
-        await status_msg.edit(content=" Trying backup API...")
-        # Use a different free API that doesn't require API key
-        fallback_url = f"https://source.unsplash.com/400x300/?{prompt}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(fallback_url, timeout=20) as response:
-                if response.status == 200:
-                    image_data = await response.read()
-                    await ctx.send(file=discord.File(io.BytesIO(image_data), "fallback.jpg"))
-                    await status_msg.delete()
-                    return
-    except Exception as e:
-        print(f"Fallback API failed: {e}")
-        print(f"Fallback URL attempted: {fallback_url}")
-        print(f"Fallback response status: {response.status if 'response' in locals() else 'No response'}")
-    
-    await status_msg.edit(content=" All APIs failed. Try again later.")
 @bot.command(name='echo')
 async def echo_message(ctx, *, message: str):
     """
@@ -1221,12 +1194,21 @@ async def on_message(message):
             afk_time = datetime.datetime.now() - afk_data['time']
             await send_long_message(message.channel, f"{mention.display_name} is AFK: {afk_data['reason']} (for {str(afk_time).split('.')[0]} ago)")
     # Check if this is a reply to the bot's message
-    is_reply_to_bot = (
-        message.reference and
-        message.reference.message_id and
-        message.reference.resolved and
-        message.reference.resolved.author == bot.user
-    )
+    is_reply_to_bot = False
+    if message.reference and message.reference.message_id:
+        referenced_message = None
+        try:
+            if isinstance(message.reference.resolved, discord.Message):
+                referenced_message = message.reference.resolved
+        except Exception:
+            referenced_message = None
+        if referenced_message is None:
+            try:
+                referenced_message = await message.channel.fetch_message(message.reference.message_id)
+            except Exception:
+                referenced_message = None
+        if referenced_message and referenced_message.author and referenced_message.author.id == bot.user.id:
+            is_reply_to_bot = True
     # Check if the bot is mentioned, it's a DM, or a reply to the bot
     if bot.user.mentioned_in(message) or isinstance(message.channel, discord.DMChannel) or is_reply_to_bot:
         try:
@@ -1269,6 +1251,53 @@ def get_response(message):
         return "I'm not sure about that. You can ask me to 'tell me a joke', 'play a game', or 'help' for more options."
     # Default response if no matches
     return random.choice(RESPONSES['default'])
+    # --- Place this AFTER your existing imports at the very top of the file ---
+from google import genai
+from google.genai import types
+
+# --- Place this WITH your other global variables (around line 30) ---
+# Initialize Google Client (Use your actual API key)
+google_client = genai.Client(api_key="AIzaSyCHoOpWo49JH6cFOe0ybGAn0VeUBBoRk54") 
+
+# --- Place this command near your other commands (e.g. after !ask) ---
+
+# --- Add this import at the top with your other imports ---
+ 
+
+# --- Replace your existing 'generate' command with this one ---
+@bot.command(name='generate')
+@is_allowed_channel()
+async def generate(ctx, *, prompt: str):
+    """Generates an image using Pollinations.ai (Free, No Billing)"""
+    
+    # 1. Send status message
+    msg = await ctx.send(f"🎨 **Generating** image for: `{prompt}`...")
+
+    try:
+        # 2. Construct the URL (Pollinations API)
+        # We encode the prompt to be URL-safe
+        encoded_prompt = prompt.replace(" ", "%20")
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&model=flux&nologo=true"
+
+        # 3. Fetch the image
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as response:
+                if response.status == 200:
+                    # Read image data
+                    image_data = await response.read()
+                    
+                    # 4. Send to Discord
+                    with io.BytesIO(image_data) as binary_img:
+                        binary_img.seek(0)
+                        await ctx.send(file=discord.File(fp=binary_img, filename="generated_image.png"))
+                    
+                    # Delete the status message
+                    await msg.delete()
+                else:
+                    await msg.edit(content=f"❌ **Error:** API returned status {response.status}")
+
+    except Exception as e:
+        await msg.edit(content=f"❌ **Error:** {str(e)}")
 # Create the FastAPI app
 app = FastAPI()
 @app.api_route("/health", methods=["GET", "HEAD"])
