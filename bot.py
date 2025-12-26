@@ -19,8 +19,6 @@ from fastapi import FastAPI
 import uvicorn
 import io
 import discord
-from google import genai
-from google.genai import types
 from discord.ui import Button, View
 from discord.ext import commands
 from discord import Message, TextChannel, DMChannel
@@ -1368,7 +1366,7 @@ async def on_message(message):
 
 # --- Place this WITH your other global variables (around line 30) ---
 # Initialize Google Client (Use your actual API key)
-google_client = genai.Client(api_key="AIzaSyCHoOpWo49JH6cFOe0ybGAn0VeUBBoRk54") 
+# google_client = genai.Client(api_key="AIzaSyCHoOpWo49JH6cFOe0ybGAn0VeUBBoRk54") 
 
 # --- Place this command near your other commands (e.g. after !ask) ---
 
