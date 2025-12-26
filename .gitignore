@@ -1,1 +1,5 @@
 chatbot/Git/
+
+# Environment files
+*.env
+**/.env
