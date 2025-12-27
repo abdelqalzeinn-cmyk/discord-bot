@@ -2151,10 +2151,45 @@ def run_web():
             print(f"[WEB] Error starting server on port {port}: {e}")
             break
 
+async def sync_commands():
+    """Helper function to sync commands"""
+    try:
+        # Sync global commands
+        synced = await bot.tree.sync()
+        
+        # Also sync for the specific guild for faster updates during development
+        guild = discord.Object(id=1440330105799839856)  # Replace with your guild ID
+        bot.tree.copy_global_to(guild=guild)
+        synced_guild = await bot.tree.sync(guild=guild)
+        
+        print(f'[BOT] Synced {len(synced)} global commands')
+        print(f'[BOT] Synced {len(synced_guild)} guild commands')
+        return True
+    except Exception as e:
+        print(f'[BOT] Error syncing commands: {e}')
+        return False
+
 if __name__ == "__main__":
     # 1. Start web server in background thread
     import threading
     threading.Thread(target=run_web, daemon=True).start()
     
-    # 2. Run the bot with the token from environment variables
-    bot.run(os.getenv('DISCORD_BOT_TOKEN'))
+    # 2. Get the bot token
+    token = os.getenv('DISCORD_BOT_TOKEN')
+    if not token:
+        print("❌ Error: DISCORD_BOT_TOKEN environment variable not set")
+        exit(1)
+    
+    # 3. Run the bot with the token
+    print("[BOT] Starting bot...")
+    try:
+        # Run the sync command before starting the bot
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(sync_commands())
+        
+        # Start the bot
+        bot.run(token)
+    except Exception as e:
+        print(f"❌ Error starting bot: {e}")
+        exit(1)
