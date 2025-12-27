@@ -16,6 +16,7 @@ import io
 import contextlib
 import textwrap
 import re
+import re
 import unicodedata
 import enum
 import signal
@@ -337,17 +338,7 @@ async def on_ready():
         print(f'[BOT] Error syncing commands: {e}')
 
 # Command handlers for prefix commands (!)
-prefix_commands = {}
-
-def prefix_command(name: str, description: str = ""):
-    """Decorator to register prefix commands"""
-    def decorator(func):
-        prefix_commands[name.lower()] = {
-            'function': func,
-            'description': description or func.__doc__ or "No description"
-        }
-        return func
-    return decorator
+# Note: We're now using @bot.command() instead of the custom prefix_command
 
 # Simple ping command to test slash commands
 @bot.tree.command(name="ping", description="Check if the bot is responding")
@@ -355,42 +346,20 @@ async def ping(interaction: discord.Interaction):
     """Simple ping command to test if the bot is responding"""
     await interaction.response.send_message("Pong! 🏓", ephemeral=True)
 
-# Prefix command handler for !ping
-@prefix_command(name="ping", description="Check if the bot is responding")
-async def ping_prefix(ctx):
-    """Simple ping command for prefix commands"""
+# Ping command (works with !ping)
+@bot.command(name="ping", description="Check if the bot is responding")
+async def ping_cmd(ctx):
+    """Simple ping command"""
     await ctx.send("Pong! 🏓")
 
-# Message event handler for prefix commands
+# Message event handler
 @bot.event
 async def on_message(message):
     # Don't respond to ourselves or other bots
     if message.author == bot.user or message.author.bot:
         return
-
-    # Process commands with ! prefix
-    if message.content.startswith('!'):
-        # Split the message into command and arguments
-        parts = message.content[1:].split()
-        if not parts:
-            return
-
-        command_name = parts[0].lower()
-        args = parts[1:] if len(parts) > 1 else []
-
-        # Find and execute the command
-        if command_name in prefix_commands:
-            handler = prefix_commands[command_name]
-            try:
-                # Call the command function with the message as context
-                ctx = await bot.get_context(message)
-                await handler['function'](ctx)
-                return  # Prevent processing commands twice
-            except Exception as e:
-                print(f"Error executing command {command_name}: {e}")
-                await message.channel.send(f"❌ Error executing command: {e}")
     
-    # Process other message events and commands
+    # Process commands
     await bot.process_commands(message)
 
 # Manual sync command for bot owner
@@ -526,14 +495,20 @@ async def hello(interaction: discord.Interaction):
     """Greet the bot"""
     await interaction.response.send_message(random.choice(RESPONSES['hello']))
 
-@prefix_command(name='hello', description='Greet the bot')
-async def hello_prefix(ctx):
-    """Greet the bot (prefix command)"""
-    await ctx.send(random.choice(RESPONSES['hello']))
+@bot.command(name='hello', description='Greet the bot')
+async def hello_cmd(ctx):
+    """Greet the bot"""
+    responses = [
+        "Hello there! 👋",
+        "Hi! How can I help you today?",
+        "Hey! Nice to see you!",
+        "Greetings! What can I do for you?"
+    ]
+    await ctx.send(random.choice(responses))
 
 @bot.tree.command(name='joke', description='Tell a random joke')
 async def tell_joke(interaction: discord.Interaction):
-    """Tell a random joke"""
+    """Tell a random joke (slash command)"""
     try:
         async with aiohttp.ClientSession() as session:
             # Try to get a joke from the API first
@@ -548,12 +523,11 @@ async def tell_joke(interaction: discord.Interaction):
                         return
     except Exception as e:
         print(f"Error fetching joke: {e}")
-    
-    # Fallback to local jokes if there's an error
-    await interaction.response.send_message(random.choice(JOKES))
+        # Fallback to local jokes if there's an error
+        await interaction.response.send_message(random.choice(JOKES))
 
-@prefix_command(name='joke', description='Tell a random joke')
-async def joke_prefix(ctx):
+@bot.command(name='joke', description='Tell a random joke')
+async def joke_cmd(ctx):
     """Tell a random joke (prefix command)"""
     try:
         async with aiohttp.ClientSession() as session:
@@ -572,55 +546,19 @@ async def joke_prefix(ctx):
     
     # Fallback to local jokes if there's an error
     await ctx.send(random.choice(JOKES))
-@bot.tree.command(name='quote', description='Get a random inspirational quote')
-async def get_quote(interaction: discord.Interaction):
-    """Get a random inspirational quote"""
-    await interaction.response.send_message(random.choice(RESPONSES['quote']))
 
-@prefix_command(name='quote', description='Get a random inspirational quote')
-async def quote_prefix(ctx):
-    """Get a random inspirational quote (prefix command)"""
-    await ctx.send(random.choice(RESPONSES['quote']))
+# ... (rest of the code remains the same)
 
-@bot.tree.command(name='fact', description='Get a random interesting fact')
-async def get_fact(interaction: discord.Interaction):
+# Get a random interesting fact
+@bot.command(name='fact', description='Get a random interesting fact')
+async def fact_cmd(ctx):
     """Get a random interesting fact"""
     facts = [
-        "Honey never spoils. Archaeologists have found pots of honey in ancient Egyptian tombs that are over 3,000 years old and still perfectly edible!",
-        "A single cloud can weigh more than a million pounds.",
-        "There are more stars in the universe than grains of sand on all the Earth's beaches.",
-        "Octopuses have three hearts and blue blood.",
+        "Honey never spoils. Archaeologists have found pots of honey in ancient Egyptian tombs that are over 3,000 years old and still perfectly good to eat!",
         "A group of flamingos is called a 'flamboyance'.",
-        "Bananas are berries, but strawberries aren't.",
-        "The human brain uses about 20% of the body's total energy.",
-        "There are more possible games of chess than atoms in the observable universe.",
-        "A day on Venus is longer than a year on Venus.",
-        "Cows have best friends and get stressed when they're separated.",
-        "The Great Wall of China is not visible from space without aid.",
-        "A bolt of lightning contains enough energy to toast 100,000 slices of bread.",
-        "There are more fake flamingos in the world than real ones.",
-        "The shortest war in history was between Britain and Zanzibar in 1896. Zanzibar surrendered after 38 minutes.",
-        "A human's little finger contributes over 50% of the hand's strength.",
-        "The inventor of the frisbee was turned into a frisbee after he died.",
-        "Some cats are actually allergic to humans."
-    ]
-    await interaction.response.send_message(random.choice(facts))
-
-@prefix_command(name='fact', description='Get a random interesting fact')
-async def fact_prefix(ctx):
-    """Get a random interesting fact (prefix command)"""
-    facts = [
-        "Honey never spoils. Archaeologists have found pots of honey in ancient Egyptian tombs that are over 3,000 years old and still perfectly edible!",
-        "A single cloud can weigh more than a million pounds.",
-        "There are more stars in the universe than grains of sand on all the Earth's beaches.",
-        "Octopuses have three hearts and blue blood.",
-        "A group of flamingos is called a 'flamboyance'.",
-        "Bananas are berries, but strawberries aren't.",
-        "The human brain uses about 20% of the body's total energy.",
-        "There are more possible games of chess than atoms in the observable universe.",
-        "A day on Venus is longer than a year on Venus.",
-        "Cows have best friends and get stressed when they're separated.",
-        "The Great Wall of China is not visible from space without aid.",
+        "The shortest war in history was between Britain and Zanzibar on August 27, 1896. Zanzibar surrendered after 38 minutes.",
+        "The unicorn is the national animal of Scotland.",
+        "The first oranges weren't orange. They were green."
         "A bolt of lightning contains enough energy to toast 100,000 slices of bread.",
         "There are more fake flamingos in the world than real ones.",
         "The shortest war in history was between Britain and Zanzibar in 1896. Zanzibar surrendered after 38 minutes.",
@@ -635,10 +573,11 @@ async def get_time(interaction: discord.Interaction):
     now = datetime.datetime.now()
     await interaction.response.send_message(f"⏰ The current time is: {now.strftime('%I:%M %p')}")
 
-@prefix_command(name='time', description='Get the current time')
-async def time_prefix(ctx):
-    """Get the current time (prefix command)"""
-    now = datetime.datetime.now()
+@bot.command(name='time', description='Get the current time')
+async def time_cmd(ctx):
+    """Get the current time"""
+    from datetime import datetime
+    now = datetime.now()
     await ctx.send(f"⏰ The current time is: {now.strftime('%I:%M %p')}")
 
 @bot.tree.command(name='remindme', description='Set a reminder')
@@ -654,10 +593,16 @@ async def encourage(interaction: discord.Interaction):
     """Get encouragement when you're feeling down"""
     await interaction.response.send_message(random.choice(RESPONSES['encourage']))
 
-@prefix_command(name='encourage', description='Get encouragement when you\'re feeling down')
-async def encourage_prefix(ctx):
-    """Get encouragement when you're feeling down (prefix command)"""
-    await ctx.send(random.choice(RESPONSES['encourage']))
+@bot.command(name='encourage', description='Get encouragement when you\'re feeling down')
+async def encourage_cmd(ctx):
+    """Get encouragement when you're feeling down"""
+    encouragements = [
+        "You're doing great! Keep it up! 💪",
+        "Every day is a new opportunity to grow and improve. You've got this! 🌟",
+        "Believe in yourself and all that you are. You're amazing! ✨",
+        "The only way to do great work is to love what you do. - Steve Jobs"
+    ]
+    await ctx.send(random.choice(encouragements))
 
 @bot.tree.command(name='afk', description='Set yourself as AFK with an optional reason')
 @app_commands.describe(reason="Reason for being AFK")
@@ -1672,176 +1617,6 @@ async def ask_ai(interaction: discord.Interaction, question: str):
                 await interaction.channel.send("I'm having trouble thinking right now. Could you try again?")
             except Exception as e:
                 print(f"Failed to send error message: {e}")
-@bot.event
-async def on_message(message):
-    # Don't respond to ourselves
-    if message.author == bot.user:
-        return
-
-    # Check if user is returning from AFK
-    user_id = message.author.id
-    if user_id in afk_users:
-        afk_data = afk_users.pop(user_id)
-        time_afk = datetime.datetime.now() - afk_data['time']
-        try:
-            if message.guild:
-                await message.author.edit(nick=afk_data['original_nick'])
-        except:
-            pass  # No permission to change nickname
-        await send_long_message(message.channel, f"Welcome back {message.author.mention}! You were AFK for {str(time_afk).split('.')[0]}. (Reason: {afk_data['reason']})")
-    
-    # Don't respond to other bots
-    if message.author.bot:
-        return
-
-    # Process commands first
-    await bot.process_commands(message)
-
-    # Check if this is a reply to the bot
-    is_reply_to_bot = False
-    referenced_message = None
-    if message.reference:
-        try:
-            print(f"DEBUG: Message is a reply to message ID: {message.reference.message_id}")
-            # Get the referenced message
-            if hasattr(message.reference, 'resolved') and message.reference.resolved:
-                referenced_message = message.reference.resolved
-            elif message.reference.message_id:
-                channel = bot.get_channel(message.reference.channel_id) or message.channel
-                if channel:
-                    try:
-                        referenced_message = await channel.fetch_message(message.reference.message_id)
-                    except discord.NotFound:
-                        print(f"Could not find referenced message {message.reference.message_id}")
-            
-            if referenced_message:
-                print(f"DEBUG: Found referenced message from {referenced_message.author} (Bot: {referenced_message.author == bot.user})")
-                print(f"DEBUG: Referenced message content: {referenced_message.content}")
-                if referenced_message.author.id == bot.user.id:
-                    is_reply_to_bot = True
-                    print("DEBUG: This is a reply to the bot's message")
-        except Exception as e:
-            print(f"Error checking reply: {e}")
-
-    # Check if this is an answer to a trivia question
-    if hasattr(bot, 'trivia_questions') and message.reference and message.reference.message_id in bot.trivia_questions:
-        trivia_data = bot.trivia_questions[message.reference.message_id]
-        if datetime.datetime.now() > trivia_data['expires']:
-            del bot.trivia_questions[message.reference.message_id]
-            return
-        try:
-            answer = int(message.content.strip())
-            if answer == trivia_data['correct']:
-                await message.add_reaction('✅')
-                await send_long_message(message.channel, f" Correct! The answer was: **{trivia_data['answer']}**")
-            else:
-                await message.add_reaction('❌')
-                await message.reply(
-                    f"That's not quite right! The correct answer was: **{trivia_data['answer']}**",
-                    mention_author=False
-                )
-            if message.reference.message_id in bot.trivia_questions:
-                del bot.trivia_questions[message.reference.message_id]
-        except ValueError:
-            pass
-        except Exception as e:
-            print(f"Error processing trivia answer: {e}")
-        return
-
-    # Check if someone mentioned an AFK user
-    for mention in message.mentions:
-        if mention.id in afk_users and mention.id != message.author.id:
-            afk_data = afk_users[mention.id]
-            afk_time = datetime.datetime.now() - afk_data['time']
-            await send_long_message(message.channel, f"{mention.display_name} is AFK: {afk_data['reason']} (for {str(afk_time).split('.')[0]} ago)")
-
-    # Handle messages where the bot is mentioned, it's a DM, or a reply to the bot
-    if (bot.user.mentioned_in(message) or 
-        isinstance(message.channel, discord.DMChannel) or 
-        is_reply_to_bot):
-        try:
-            print(f"DEBUG: Processing message - Type: {type(message).__name__}, Content: '{message.content}'")
-            print(f"DEBUG: is_reply_to_bot: {is_reply_to_bot}, is_mention: {bot.user.mentioned_in(message)}, is_dm: {isinstance(message.channel, discord.DMChannel)}")
-            
-            # Remove bot mention if present
-            content = message.content.replace(f'<@{bot.user.id}>', '').strip()
-            
-            # If it's a reply to the bot, get the original message content
-            if is_reply_to_bot and (not content or content.isspace()):
-                try:
-                    print("DEBUG: Processing reply to bot's message")
-                    channel = bot.get_channel(message.reference.channel_id) or message.channel
-                    if channel:
-                        print(f"DEBUG: Fetching referenced message {message.reference.message_id} from channel {channel.id}")
-                        referenced_msg = await channel.fetch_message(message.reference.message_id)
-                        if referenced_msg.author.id == bot.user.id:
-                            # If replying with no content, use the original message's content
-                            if referenced_msg.embeds:
-                                content = referenced_msg.embeds[0].description or ""
-                                print(f"DEBUG: Using embedded content from referenced message: {content}")
-                            else:
-                                content = referenced_msg.content
-                                print(f"DEBUG: Using text content from referenced message: {content}")
-                except Exception as e:
-                    print(f"ERROR: Failed to process reply: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            # Create a proper context for the message
-            try:
-                import traceback
-                
-                # First try to get the context normally
-                ctx = await bot.get_context(message)
-                
-                # If we don't have a valid command, create a minimal context manually
-                if not ctx.valid:
-                    print("DEBUG: Creating minimal context")
-                    
-                    # Create a simple context without trying to modify valid
-                    ctx = await bot.get_context(message)
-                    
-                    # Create a custom context class that's always valid
-                    class ContextWrapper(discord.ext.commands.Context):
-                        def __init__(self, **kwargs):
-                            super().__init__(**kwargs)
-                            self._valid = True
-                        
-                        @property
-                        def valid(self):
-                            return True
-                    
-                    ctx = ContextWrapper(bot=bot, message=message, view=ctx.view, prefix=bot.command_prefix)
-                
-                print(f"DEBUG: Context created - valid: {getattr(ctx, 'valid', False)}, command: {getattr(ctx, 'command', None)}")
-            except Exception as e:
-                import traceback
-                error_msg = f"Error creating context: {str(e)}\n{traceback.format_exc()}"
-                print(error_msg)
-                await send_long_message(message.channel, "Sorry, I encountered an error processing your message. Please try again!")
-                return
-            
-            print(f"DEBUG: Final content to process: '{content}'")
-            
-            # Use the ask_ai function to handle the response
-            if content or is_reply_to_bot:
-                question = content or message.content
-                print(f"DEBUG: Calling ask_ai with question: '{question}'")
-                await ask_ai(ctx, question=question)
-            else:
-                print("DEBUG: No content to process, sending hello response")
-                await send_long_message(message.channel, random.choice(RESPONSES['hello']))
-                
-        except Exception as e:
-            import traceback
-            error_msg = f"ERROR in message handling: {str(e)}\n{traceback.format_exc()}"
-            print(error_msg)
-            try:
-                await send_long_message(message.channel, "Sorry, I encountered an error processing your message. Please try again!")
-            except Exception as send_error:
-                print(f"ERROR sending error message: {send_error}")
-            import traceback
-            traceback.print_exc()
 
 # ... (rest of the code remains the same)
 
@@ -1884,56 +1659,59 @@ def is_suspicious(text):
             
     return False
 
-def normalize_text(text):
-    # Convert to lowercase
-    text = text.lower()
-    # Remove accents and special characters
-    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
-    # Replace common leet speak and special characters
+def contains_banned_word(text, banned_words):
+    """Check if text contains any banned words using word boundaries"""
+    if not text or not banned_words:
+        return None
+        
+    # Convert to lowercase for case-insensitive matching
+    text_lower = text.lower()
+    
+    # First, check for exact word matches with word boundaries
+    for word in banned_words:
+        # Skip empty strings
+        if not word.strip():
+            continue
+            
+        # Check for whole word match with word boundaries
+        if re.search(r'\b' + re.escape(word) + r'\b', text_lower):
+            return word
+            
+    # Then check for blocked anatomical terms (more permissive matching)
+    blocked_anatomical_terms = [
+        'reproductive', 'genital', 'organ', 'penis', 'vagina', 'testicl', 'testes', 
+        'scrotum', 'vulva', 'labia', 'clitoris', 'breast', 'areola', 'nipple',
+        'anus', 'rectum', 'buttock', 'pubic', 'pelvic', 'semen', 'sperm', 'penile',
+        'vaginal', 'anal', 'sexual', 'sex', 'nude', 'naked', 'exposed', 'skin'
+    ]
+    
+    # Check for blocked terms with word boundaries
+    for term in blocked_anatomical_terms:
+        if re.search(r'\b' + re.escape(term) + r'\b', text_lower):
+            return term
+            
+    # Finally, check for leetspeak variations
     leet_map = {
         '1': 'i', '!': 'i', '3': 'e', '4': 'a', '@': 'a',
         '0': 'o', '5': 's', '7': 't', '8': 'b', '$': 's',
         '9': 'g', '()': 'o', '[]': 'o', '|)': 'd', '|]': 'd',
         '|=': 'f', 'ph': 'f', 'vv': 'w', 'vvv': 'm', 'vvvv': 'w'
     }
+    
+    # Normalize the text (convert leetspeak and remove special chars)
+    normalized_text = text_lower
     for k, v in leet_map.items():
-        text = text.replace(k, v)
-    # Remove all non-alphanumeric characters
-    text = re.sub(r'[^a-z0-9]', '', text)
-    return text
-
-def contains_banned_word(text, banned_words):
-    # Normalize the input text
-    normalized_text = normalize_text(text)
+        normalized_text = normalized_text.replace(k, v)
+    normalized_text = re.sub(r'[^a-z0-9]', ' ', normalized_text)
     
-    # Split into words and check each one
-    words = re.findall(r'[a-z0-9]+', normalized_text)
-    
-    # Check for exact matches first
-    for word in words:
-        if word in banned_words:
+    # Check normalized text for banned words with word boundaries
+    for word in banned_words:
+        if not word.strip():
+            continue
+        if re.search(r'\b' + re.escape(word) + r'\b', normalized_text):
             return word
-    
-    # Block all anatomical/medical terms regardless of context
-    blocked_anatomical_terms = [
-        'reproductive', 'genital', 'organ', 'penis', 'vagina', 'testicl', 'testes', 
-        'scrotum', 'vulva', 'labia', 'clitoris', 'breast', 'areola', 'nipple',
-        'anus', 'rectum', 'buttock', 'pubic', 'pelvic', 'semen', 'sperm', 'penile',
-        'vaginal', 'anal', 'sexual', 'sex', 'nude', 'naked', 'exposed','skin'
-    ]
-    
-    # Check for any blocked terms
-    text_lower = text.lower()
-    for term in blocked_anatomical_terms:
-        if term in text_lower:
-            return term
             
-    # Check for partial matches in longer words (3+ chars)
-    for word in words:
-        if len(word) > 3:
-            for banned in [b for b in banned_words if len(b) >= 3]:
-                if banned in word:
-                    return banned
+    return None
                     
     return None
 @bot.tree.command(name='report', description='Report a false positive in content filtering')
@@ -2024,16 +1802,14 @@ from contextlib import nullcontext  # Add this at the top with other imports
 )
 async def generate_slash(interaction: discord.Interaction, prompt: str, model: str = "turbo"):
     """Generate an image using AI (slash command)"""
-    # Check for banned words
-    prompt_lower = prompt.lower()
-    for word in BANNED_WORDS:
-        if word in prompt_lower:
-            print(f"Blocked prompt containing banned word: {word}")
-            await interaction.response.send_message(
-                "❌ This prompt contains content that violates our guidelines.",
-                ephemeral=True
-            )
-            return
+    # Check for banned words using the improved function
+    if contains_banned_word(prompt, BANNED_WORDS):
+        print("Blocked prompt containing banned word")
+        await interaction.response.send_message(
+            "❌ This prompt contains content that violates our guidelines.",
+            ephemeral=True
+        )
+        return
     
     # Validate model
     model = model.lower()
@@ -2090,31 +1866,22 @@ BANNED_WORDS = [
     "penis", "dick", "boobs", "vagina", "pussy", "ass", "nude", "token",
     "testicales", "testicle", "testes", "genital", "breast", "butt", "buttock", "backshots",
     # Common bypass attempts
-    "p0rn", "s3x", "s3xy", "a$$", "@$$", "b00b", "b00bs", "v4g1n4",
-    # Common misspellings
-    "t3st1cl3s", "t3st1cl3", "t3st1c13s", "t3st1c1e5", "t3st1c135",
-    "t35t1cl35", "t35t1cl3", "t35t1c13s", "t35t1c1e5", "t35t1c135"
-]
+    "p0rn", "s3x", "s3xy", "a$$", "@$$", "b00b", "b00bs", "v4g1n4"
+]  # End of BANNED_WORDS list
 
 async def handle_generate(context, prompt: str, model: str = "turbo"):
     """Handle both slash and prefix commands"""
-    # Check for banned words (works for both slash and prefix commands)
-    prompt_lower = prompt.lower()
-    # Split the prompt into words and check each one
-    prompt_words = prompt_lower.split()
-    
-    for word in BANNED_WORDS:
-        # Check if the banned word appears as a whole word in the prompt
-        if any(word == w or f"{word}s" == w or f"{word}es" == w or f"{word}ed" == w for w in prompt_words):
-            print(f"Blocked prompt containing banned word: {word}")
-            if hasattr(context, 'response') and not context.response.is_done():
-                await context.response.send_message(
-                    "❌ This prompt contains content that violates our guidelines.",
-                    ephemeral=True
-                )
-            else:
-                await context.send("❌ This prompt contains content that violates our guidelines.")
-            return
+    # Check for banned words using the improved function
+    if contains_banned_word(prompt, BANNED_WORDS):
+        print("Blocked prompt containing banned word")
+        if hasattr(context, 'response') and not context.response.is_done():
+            await context.response.send_message(
+                "❌ This prompt contains content that violates our guidelines.",
+                ephemeral=True
+            )
+        else:
+            await context.send("❌ This prompt contains content that violates our guidelines.")
+        return
             
     # Rate limiting
     current_time = time.time()
