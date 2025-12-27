@@ -2098,11 +2098,11 @@ BANNED_WORDS = [
 
 async def handle_generate(context, prompt: str, model: str = "turbo"):
     """Handle both slash and prefix commands"""
-    # Check for banned words (double check for prefix commands)
+    # Check for banned words (works for both slash and prefix commands)
     prompt_lower = prompt.lower()
     for word in BANNED_WORDS:
         if word in prompt_lower:
-            print(f"Blocked prompt in handle_generate containing banned word: {word}")
+            print(f"Blocked prompt containing banned word: {word}")
             if hasattr(context, 'response') and not context.response.is_done():
                 await context.response.send_message(
                     "❌ This prompt contains content that violates our guidelines.",
