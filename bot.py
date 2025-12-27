@@ -103,9 +103,35 @@ TERMINAL_ADMINS = {
 }
 # --- PASTE THE BANNED WORDS HERE ---
 BANNED_WORDS = [
-    # Explicit content
-    "nsfw", "naked", "porn", "sex", "gore", "blood", "violence",
-    "r34", "hentai", "undress", "bikini", "lingerie",
+    # Nudity and explicit content
+    "nsfw", "naked", "nude", "nudity", "nudist", "naturist", "bikini", "lingerie", "underwear", "panties",
+    "topless", "bottomless", "cleavage", "upskirt", "downblouse", "explicit", "xxx", "porn", "porno", "pornography",
+    "hentai", "ecchi", "r34", "rule34", "lewds", "lewd", "suggestive", "provocative", "seductive", "erotic",
+    
+    # Body parts (explicit)
+    "breasts", "boobs", "tits", "titties", "nipples", "areola", "areolas", "cleavage", "clevage", "clev",
+    "vagina", "pussy", "pussies", "vulva", "labia", "clit", "clitoris", "penis", "dick", "cock", "dildo", "dicks", 
+    "cocks", "balls", "testicles", "testes", "scrotum", "ass", "asshole", "arse", "arsehole", "butt", "buttocks",
+    "anus", "anal", "butthole", "rectum", "bum", "bums", "booty", "twerking", "thong", "g-string", "gstring",
+    
+    # Sexual content
+    "sex", "sexual", "sexy", "sexuality", "intercourse", "fuck", "fucking", "fucker", "fucked", "fucks",
+    "screw", "screwing", "screwed", "screws", "fellate", "fellatio", "blowjob", "blow job", "handjob", "hand job",
+    "bj", "hj", "orgasm", "orgasmic", "orgasms", "masturbat", "jerk off", "jerkoff", "jacking off", "wank",
+    "wanking", "wanker", "ejaculat", "cum", "semen", "sperm", "creampie", "cream pie", "cowgirl", "doggy style",
+    "missionary", "69", "sixty nine", "sixtynine", "kamasutra", "kama sutra", "kinky", "bdsm", "bondage", "domination",
+    "submission", "submissive", "dominant", "domme", "dom", "sub", "slave", "master", "mistress", "fetish",
+    
+    # Violence and gore
+    "gore", "gory", "blood", "bloody", "violence", "violent", "brutal", "brutality", "torture", "torturing",
+    "mutilat", "decapitat", "behead", "beheading", "dismember", "dismemberment", "cannibal", "cannibalism",
+    "snuff", "snuff film", "snuff movie", "guro", "gurokawa", "ryona", "vore", "scat", "scatology", "coprophilia",
+    
+    # Common misspellings and variations
+    "pron", "p0rn", "pr0n", "porn0", "p0rn0", "pr0n0", "porn0graphy", "p0rn0graphy", "pr0n0graphy",
+    "secks", "s3x", "s3xy", "sexy", "sexe", "sexi", "sexii", "sexiii", "sexiiii", "sexiiiii",
+    "fuk", "fuking", "fukin", "fuker", "fuked", "fukkin", "fukking", "fukn", "fukr", "fukw",
+    "d1ck", "d1ckhead", "d1ckwad", "d1ckface", "d1ckhead", "d1ckwad", "d1ckface",
     "penis", "dick", "boobs", "vagina", "pussy", "ass", "nude", "token",
     "testicales", "testicle", "testes", "genital", "breast", "butt", "buttock", "backshots",
     # Common bypass attempts
@@ -1457,35 +1483,35 @@ def contains_banned_word(text, banned_words):
     # Normalize the input text
     normalized_text = normalize_text(text)
     
-    # Check for exact matches first
-    for word in banned_words:
-        # Check for exact match as a whole word
-        if re.search(r'\b' + re.escape(word) + r'\b', normalized_text):
-            return word
-            
-    # Check for partial matches in longer words
+    # Split into words and check each one
     words = re.findall(r'[a-z0-9]+', normalized_text)
+    
+    # Check for exact matches first
     for word in words:
-        # Only check words longer than 3 characters to avoid false positives
-        if len(word) <= 3:
-            continue
-            
-        # Check against each banned word
-        for banned in banned_words:
-            # Only check banned words with 4+ characters to avoid false positives
-            if len(banned) >= 4 and banned in word:
-                return banned
-                
-    # Check for common obfuscation techniques
-    for word in banned_words:
-        if len(word) < 4:
-            continue
-            
-        # Check for common separators between letters
-        pattern = r'[^a-z0-9]*'.join(re.escape(c) for c in word)
-        if re.search(pattern, normalized_text):
+        if word in banned_words:
             return word
+    
+    # Block all anatomical/medical terms regardless of context
+    blocked_anatomical_terms = [
+        'reproductive', 'genital', 'organ', 'penis', 'vagina', 'testicl', 'testes', 
+        'scrotum', 'vulva', 'labia', 'clitoris', 'breast', 'areola', 'nipple',
+        'anus', 'rectum', 'buttock', 'pubic', 'pelvic', 'semen', 'sperm', 'penile',
+        'vaginal', 'anal', 'sexual', 'sex', 'nude', 'naked', 'exposed'
+    ]
+    
+    # Check for any blocked terms
+    text_lower = text.lower()
+    for term in blocked_anatomical_terms:
+        if term in text_lower:
+            return term
             
+    # Check for partial matches in longer words (3+ chars)
+    for word in words:
+        if len(word) > 3:
+            for banned in [b for b in banned_words if len(b) >= 3]:
+                if banned in word:
+                    return banned
+                    
     return None
 @bot.command(name='report')
 async def report_false_positive(ctx, *, reason: str):
