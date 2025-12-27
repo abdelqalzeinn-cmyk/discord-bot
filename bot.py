@@ -29,7 +29,44 @@ from dotenv import load_dotenv
 from jokes import JOKES
 from typing import Dict, List, Optional, Union
 from games import HangmanGame, QuizGame, RPSGame, TicTacToeGame, QUIZ_QUESTIONS, HANGMAN_WORDS
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, UTC
+import re
+import unicodedata
+
+def is_suspicious(prompt: str) -> bool:
+    """Check if a prompt contains suspicious patterns"""
+    # Check for excessive special characters
+    if len(re.findall(r'[!@#$%^&*()_+{}\[\]:;<>,.?~\\/-]', prompt)) > len(prompt) * 0.3:
+        return True
+    
+    # Check for excessive numbers
+    if len(re.findall(r'\d', prompt)) > len(prompt) * 0.3:
+        return True
+    
+    # Check for suspicious patterns
+    suspicious_patterns = [
+        r'\.{3,}',  # Multiple dots
+        r'_{3,}',   # Multiple underscores
+        r'-{3,}',   # Multiple dashes
+        r'\s{3,}',  # Multiple spaces
+    ]
+    return any(re.search(pattern, prompt) for pattern in suspicious_patterns)
+
+async def log_suspicious_activity(ctx, prompt: str, reason: str):
+    """Log suspicious activity to the moderation channel"""
+    if 'MODERATION_CHANNEL_ID' in globals() and MODERATION_CHANNEL_ID:
+        channel = bot.get_channel(MODERATION_CHANNEL_ID)
+        if channel:
+            await channel.send(
+                f"🚨 Suspicious activity detected:\n"
+                f"User: {ctx.author} ({ctx.author.id})\n"
+                f"Channel: {getattr(ctx.channel, 'name', 'DM')}\n"
+                f"Prompt: `{prompt}`\n"
+                f"Reason: {reason}"
+            )
+
+# Add this with your other constants
+MODERATION_CHANNEL_ID = None  # Set to your moderation channel ID if you have one
 
 # Load environment variables
 load_dotenv()
@@ -1469,7 +1506,7 @@ async def fast_generate(ctx, *, prompt: str):
     """Generate images faster using flux-schnell model (2 per minute limit)"""
     # Check rate limit first
     user_id = ctx.author.id
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     
     # Clean up old timestamps
     GENERATION_COUNTER[user_id] = [t for t in GENERATION_COUNTER.get(user_id, []) 
