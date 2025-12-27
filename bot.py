@@ -1400,7 +1400,7 @@ async def generate_image(ctx, *, prompt: str):
         import random
         seed = random.randint(0, 99999)
         encoded_prompt = prompt.replace(" ", "%20")
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}&width=1024&height=1024&nologo=true"
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}&turbo=true&width=512&height=512"
 
         # 3. Download the image
         response = requests.get(image_url, timeout=30)
@@ -1570,4 +1570,3 @@ if __name__ == "__main__":
     
     # 2. Run the bot with the token from environment variables
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
-
