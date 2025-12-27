@@ -1457,20 +1457,35 @@ def contains_banned_word(text, banned_words):
     # Normalize the input text
     normalized_text = normalize_text(text)
     
-    # Split into words and check each one
-    words = re.findall(r'[a-z0-9]+', normalized_text)
-    
-    for word in words:
-        # Check for exact match first
-        if word in banned_words:
+    # Check for exact matches first
+    for word in banned_words:
+        # Check for exact match as a whole word
+        if re.search(r'\b' + re.escape(word) + r'\b', normalized_text):
             return word
             
-        # Only check for partial matches in longer words
-        if len(word) > 3:  # Only check for partial matches in words longer than 3 characters
-            for banned in banned_words:
-                if len(banned) > 3 and banned in word:  # Only check for banned words longer than 3 characters
-                    return banned
-                    
+    # Check for partial matches in longer words
+    words = re.findall(r'[a-z0-9]+', normalized_text)
+    for word in words:
+        # Only check words longer than 3 characters to avoid false positives
+        if len(word) <= 3:
+            continue
+            
+        # Check against each banned word
+        for banned in banned_words:
+            # Only check banned words with 4+ characters to avoid false positives
+            if len(banned) >= 4 and banned in word:
+                return banned
+                
+    # Check for common obfuscation techniques
+    for word in banned_words:
+        if len(word) < 4:
+            continue
+            
+        # Check for common separators between letters
+        pattern = r'[^a-z0-9]*'.join(re.escape(c) for c in word)
+        if re.search(pattern, normalized_text):
+            return word
+            
     return None
 @bot.command(name='report')
 async def report_false_positive(ctx, *, reason: str):
