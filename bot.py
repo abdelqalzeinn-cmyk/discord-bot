@@ -23,7 +23,8 @@ import uvicorn
 # Make sure to set GOOGLE_API_KEY in your .env file
 from discord.ui import Button, View
 from discord.ext import commands
-from discord import Message, TextChannel, DMChannel
+from discord import Message, TextChannel, DMChannel, Intents
+from discord_slash import SlashCommand, SlashContext
 from typing import Union
 from dotenv import load_dotenv
 from jokes import JOKES
@@ -266,8 +267,22 @@ async def send_long_message(destination: Union[TextChannel, DMChannel], content:
                 await destination.send(f"Error sending message part {i+1}: {str(e)[:100]}...")
             except:
                 pass
-# Initialize bot
-bot = commands.Bot(command_prefix='!', intents=intents)
+# Initialize bot with intents
+intents = Intents.default()
+intents.message_content = True
+intents.members = True
+
+# Initialize bot with prefix commands
+bot = commands.Bot(
+    command_prefix='!',  # Keep for backward compatibility
+    intents=intents,
+    help_command=None  # Disable default help command to implement custom one
+)
+
+# Initialize slash commands
+slash = SlashCommand(bot, sync_commands=True)
+
+# Initialize bot attributes
 bot.trivia_questions = {}  # Initialize trivia_questions dictionary
 bot.scheduled_messages = []  # Store scheduled messages
 # Enhanced responses with more context
@@ -366,11 +381,11 @@ async def on_ready():
     print(f'[BOT] Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     await bot.change_presence(activity=discord.Game(name="with Python"))
-@bot.slash_command(name='hello', description='Greet the bot')
+@slash.slash(name='hello', description='Greet the bot')
 async def hello(ctx):
     """Greet the bot"""
     await send_long_message(ctx, random.choice(RESPONSES['hello']))
-@bot.slash_command(name='joke', description='Tell a random joke')
+@slash.slash(name='joke', description='Tell a random joke')
 async def tell_joke(ctx):
     """Tell a random joke"""
     try:
@@ -393,11 +408,11 @@ async def tell_joke(ctx):
         # Fallback to local jokes if there's an error
         print(f"Error fetching joke: {e}")
         await ctx.send(random.choice(JOKES))
-@bot.slash_command(name='quote', description='Get a random inspirational quote')
+@slash.slash(name='quote', description='Get a random inspirational quote')
 async def get_quote(ctx):
     """Get a random inspirational quote"""
     await send_long_message(ctx, random.choice(RESPONSES['quote']))
-@bot.slash_command(name='fact', description='Get a random interesting fact')
+@slash.slash(name='fact', description='Get a random interesting fact')
 async def get_fact(ctx):
     """Get a random interesting fact"""
     facts = [
@@ -418,23 +433,28 @@ async def get_fact(ctx):
         "A human's little finger contributes over 50% of the hand's strength."
     ]
     await send_long_message(ctx, random.choice(facts))
-@bot.slash_command(name='time', description='Get the current time')
+@slash.slash(name='time', description='Get the current time')
 async def get_time(ctx):
     """Get the current time"""
     now = datetime.datetime.now()
     await send_long_message(ctx, f"⏰ The current time is: {now.strftime('%I:%M %p')}")
-@bot.slash_command(name='remindme', description='Set a reminder')
-async def set_reminder(ctx, time, *, message):
+@slash.slash(name='remindme', description='Set a reminder',
+             options=[
+                 {"name": "time", "description": "When to remind (e.g., 1h, 30m, 2d)", "type": 3, "required": True},
+                 {"name": "message", "description": "The reminder message", "type": 3, "required": True}
+             ])
+async def set_reminder(ctx, time: str, message: str):
     """Set a reminder"""
     await send_long_message(ctx, f"⏰ I'll remind you to \"{message}\" in {time}")
-@bot.slash_command(name='dontgiveup', description='Get encouragement when you\'re feeling down')
+@slash.slash(name='encourage', description='Get encouragement when you\'re feeling down')
 async def encourage(ctx):
     """Get encouragement when you're feeling down"""
     await send_long_message(ctx, random.choice(RESPONSES['encourage']))
-@bot.slash_command(name='afk', description='Set yourself as AFK with an optional reason')
-async def set_afk(ctx, *, reason: str = "AFK"):
+@slash.slash(name='afk', description='Set yourself as AFK with an optional reason',
+             options=[{"name": "reason", "description": "Reason for being AFK", "type": 3, "required": False}])
+async def set_afk(ctx, reason: str = "AFK"):
     """Set yourself as AFK with an optional reason"""
-    user_id = ctx.author.id
+    user_id = ctx.author_id
     afk_users[user_id] = {
         'reason': reason,
         'time': datetime.datetime.now(),
@@ -447,18 +467,18 @@ async def set_afk(ctx, *, reason: str = "AFK"):
     except:
         pass  # No permission to change nickname
     await send_long_message(ctx, f"{ctx.author.mention} is now AFK: {reason} ‍")
-@bot.slash_command(name='clear', description='Clear the conversation history for this channel')
+@slash.slash(name='clear', description='Clear the conversation history for this channel')
 async def clear_history(ctx):
     """Clear the conversation history for this channel"""
-    if ctx.channel.id in conversation_history:
+    if ctx.channel_id in conversation_history:
         # Keep only the system message
-        conversation_history[ctx.channel.id] = [
+        conversation_history[ctx.channel_id] = [
             {"role": "system", "content": "You are a helpful assistant."}
         ]
         await send_long_message(ctx, "Conversation history cleared! ")
     else:
         await send_long_message(ctx, "No conversation history to clear.")
-@bot.slash_command(name='help', description='Show all available commands organized by categories')
+@slash.slash(name='help', description='Show all available commands organized by categories')
 async def help_command(ctx):
     """Show all available commands organized by categories"""
     try:
@@ -511,70 +531,120 @@ async def help_command(ctx):
         await send_long_message(ctx, full_message)
     except Exception as e:
         print(f"Error in help command: {e}")
-@bot.slash_command(name='reload', description='Reload the bot (Admin only)')
+@slash.slash(name='reload', description='Reload the bot (Admin only)')
 @is_allowed_channel()
 async def reload_bot(ctx):
     """Reload the bot (Admin only)"""
-    if ctx.author.id not in TERMINAL_ADMINS:
+    if ctx.author_id not in TERMINAL_ADMINS:
         return await ctx.send(" **Restricted:** This command is for authorized admins only.")
     await send_long_message(ctx, " Reloading bot... This may take a few seconds.")
     import sys
     import os
     # Clear all active games
-    bot.active_games.clear()
+    if hasattr(bot, 'active_games'):
+        bot.active_games.clear()
     # Restart the bot
     os.execv(sys.executable, ['python'] + sys.argv)
-@bot.slash_command(name='terminal', description='Runs python code (Restricted to admins)')
-async def internal_terminal(ctx, *, body: str):
-    """Runs python code (Restricted to two specific users)"""
-    # Check if the user is one of the two allowed admins
-    if ctx.author.id not in TERMINAL_ADMINS:
+@slash.slash(name='terminal', description='Run Python code (Admin only)',
+             options=[{"name": "code", "description": "Python code to execute", "type": 3, "required": True}])
+async def internal_terminal(ctx, code: str):
+    """Run Python code (Admin only)"""
+    # Check if the user is authorized
+    if ctx.author_id not in TERMINAL_ADMINS:
         return await ctx.send(" **Restricted:** This command is for authorized terminal admins only.")
-    # --- Everything below this stays the same ---
-    if body.startswith('```'):
-        body = '\n'.join(body.split('\n')[1:-1])
+    
+    # Clean up the code input
+    if code.startswith('```'):
+        code = '\n'.join(code.split('\n')[1:-1])
     else:
-        body = body.strip('` \n')
+        code = code.strip('` \n')
+    
     stdout = io.StringIO()
     try:
         env = {'bot': bot, 'ctx': ctx, 'author': ctx.author}
         env.update(globals())
-        exec_text = f'async def func():\n{textwrap.indent(body, "  ")}'
+        exec_text = f'async def func():\n{textwrap.indent(code, "  ")}'
         exec(exec_text, env)
         func = env['func']
+        
         with contextlib.redirect_stdout(stdout):
             ret = await func()
-        value = stdout.getvalue()
-        await ctx.send(f"```py\n{value or 'Success (no output)'}```")
-    except Exception:
-        await ctx.send(f"```py\n{traceback.format_exc()}```")
-@bot.slash_command(name='echo', description='Make the bot repeat your message')
-async def echo_message(ctx, *, message: str):
-    """
-    Make the bot repeat your message in the current channel
-    Usage: !echo Your message here
-    """
+            
+        output = stdout.getvalue()
+        result = f"```py\n{output or 'Success (no output)'}"
+        if ret is not None:
+            result += f"\n# Return value: {ret}"
+        result += "```"
+        
+        # Ensure the message isn't too long
+        if len(result) > 2000:
+            result = result[:1990] + "\n... (truncated)"
+            
+        await ctx.send(result)
+        
+    except Exception as e:
+        error_msg = f"```py\n{traceback.format_exc()}"
+        if str(e):
+            error_msg += f"\n# Error: {e}"
+        error_msg += "```"
+        
+        if len(error_msg) > 2000:
+            error_msg = error_msg[:1990] + "\n... (truncated)"
+            
+        await ctx.send(error_msg)
+@slash.slash(name='echo', description='Make the bot repeat your message',
+             options=[{"name": "message", "description": "The message to repeat", "type": 3, "required": True}])
+async def echo_message(ctx, message: str):
+    """Make the bot repeat your message in the current channel"""
     try:
-        # Delete the command message if we have permission
-        if ctx.channel.permissions_for(ctx.me).manage_messages:
-            try:
-                await ctx.message.delete()
-            except:
-                pass
         # Check permissions before sending
         if not ctx.channel.permissions_for(ctx.author).manage_messages:
-            return await ctx.send(" You need 'Manage Messages' permission to use this command.", delete_after=5)
+            return await ctx.send("You need 'Manage Messages' permission to use this command.", delete_after=5)
+        
         # Send the message
         await ctx.send(message)
+        
     except Exception as e:
-        # If something goes wrong, send an error that will be deleted after 5 seconds
-        error_msg = await ctx.send(f" Error: {e}")
+        # Send error message that will be deleted after 5 seconds
+        error_msg = await ctx.send(f"Error: {str(e)[:1800]}")
         await asyncio.sleep(5)
         try:
             await error_msg.delete()
         except:
             pass
-@bot.slash_command(name='trivia', description='Get a random trivia question with interactive buttons')
+@slash.slash(name='trivia', description='Get a random trivia question',
+             options=[{
+                 "name": "category",
+                 "description": "Category for the trivia question",
+                 "type": 3,
+                 "required": False,
+                 "choices": [
+                     {"name": "General Knowledge", "value": "general"},
+                     {"name": "Books", "value": "books"},
+                     {"name": "Films", "value": "films"},
+                     {"name": "Music", "value": "music"},
+                     {"name": "Theatre", "value": "theatre"},
+                     {"name": "TV", "value": "tv"},
+                     {"name": "Video Games", "value": "games"},
+                     {"name": "Board Games", "value": "boardgames"},
+                     {"name": "Science", "value": "science"},
+                     {"name": "Computers", "value": "computers"},
+                     {"name": "Mathematics", "value": "math"},
+                     {"name": "Mythology", "value": "mythology"},
+                     {"name": "Sports", "value": "sports"},
+                     {"name": "Geography", "value": "geography"},
+                     {"name": "History", "value": "history"},
+                     {"name": "Politics", "value": "politics"},
+                     {"name": "Art", "value": "art"},
+                     {"name": "Celebrities", "value": "celebrities"},
+                     {"name": "Animals", "value": "animals"},
+                     {"name": "Vehicles", "value": "vehicles"},
+                     {"name": "Comics", "value": "comics"},
+                     {"name": "Gadgets", "value": "gadgets"},
+                     {"name": "Anime", "value": "anime"},
+                     {"name": "Cartoons", "value": "cartoons"}
+                 ]
+             }])
 async def trivia(ctx, category: str = None):
     """Get a random trivia question with interactive buttons!"""
     categories = {
@@ -1606,9 +1676,11 @@ async def fast_generate(ctx, *, prompt: str):
     
 # Create the FastAPI app
 app = FastAPI()
+
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {"status": "ok"}
+
 def run_web():
     # Try multiple ports starting from the configured one
     base_port = int(os.environ.get("PORT", 10000))
@@ -1624,9 +1696,8 @@ def run_web():
                 if attempt < max_attempts - 1:
                     print(f"[WEB] Port {port} in use, trying {port + 1}...")
                     continue
-            else:
-                print(f"[WEB] Error starting server on port {port}: {e}")
-                break
+            print(f"[WEB] Error starting server on port {port}: {e}")
+            break
 
 @bot.slash_command(name='say', description='Make the bot say something in the current channel')
 @commands.has_permissions(manage_messages=True)
