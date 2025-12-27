@@ -1454,11 +1454,40 @@ async def suggest_ban_word(ctx, *, word: str):
         )
         await ctx.send("✅ Your suggestion has been submitted for review. Thank you!")
 # Update the command to use the new check
+from collections import defaultdict
+from datetime import datetime, timedelta
+import asyncio
+
+# Add this with your other global variables
+GENERATION_COUNTER = defaultdict(list)
+RATE_LIMIT = 2  # 2 generations
+RATE_LIMIT_WINDOW = 60  # per 60 seconds
+
 @bot.command(name='generate')
 @commands.cooldown(2, 10, commands.BucketType.user)
 async def fast_generate(ctx, *, prompt: str):
-    """Generate images faster using flux-schnell model"""
-    # Check for suspicious patterns first
+    """Generate images faster using flux-schnell model (2 per minute limit)"""
+    # Check rate limit first
+    user_id = ctx.author.id
+    now = datetime.utcnow()
+    
+    # Clean up old timestamps
+    GENERATION_COUNTER[user_id] = [t for t in GENERATION_COUNTER.get(user_id, []) 
+                                 if now - t < timedelta(seconds=RATE_LIMIT_WINDOW)]
+    
+    # Check if user has exceeded the limit
+    if len(GENERATION_COUNTER[user_id]) >= RATE_LIMIT:
+        time_left = (GENERATION_COUNTER[user_id][0] + timedelta(seconds=RATE_LIMIT_WINDOW) - now).seconds
+        return await ctx.send(f"❌ Rate limit exceeded. Please wait {time_left} seconds before generating again.")
+    
+    # Add current timestamp
+    GENERATION_COUNTER[user_id].append(now)
+    
+    # Rest of your existing generate command
+    if ctx.author.id not in ALLOWED_USERS:
+        return await ctx.send("❌ You don't have permission to use this command.")
+    
+    # Check for suspicious patterns
     if is_suspicious(prompt):
         await log_suspicious_activity(ctx, prompt, "Suspicious pattern detected")
         return await ctx.send("❌ Your request appears to contain suspicious patterns and was flagged for review.")
@@ -1469,8 +1498,6 @@ async def fast_generate(ctx, *, prompt: str):
         await log_suspicious_activity(ctx, prompt, f"Banned word detected: {bad_word}")
         return await ctx.send("❌ Sorry, that prompt contains content that's not allowed.")
     
-    # Rest of your command...
-        
     msg = await ctx.send("⚡ **Generating your image...**")
     
     try:
@@ -1482,13 +1509,18 @@ async def fast_generate(ctx, *, prompt: str):
                 if resp.status == 200:
                     data = await resp.read()
                     image_data = io.BytesIO(data)
-                    file = discord.File(fp=image_data, filename="fast.png")
-                    await ctx.send(content=f"⚡ **Generated:** {prompt}", file=file)
+                    file = discord.File(fp=image_data, filename="generated.png")
+                    await ctx.send(content=f"🎨 **Generated:** {prompt}", file=file)
                     await msg.delete()
                 else:
                     await msg.edit(content="❌ Failed to generate image. Please try again later.")
     except Exception as e:
         await msg.edit(content=f"❌ Error: {e}")
+    finally:
+        # Clean up old timestamps
+        GENERATION_COUNTER[user_id] = [t for t in GENERATION_COUNTER.get(user_id, []) 
+                                     if now - t < timedelta(seconds=RATE_LIMIT_WINDOW)]
+    
 # Create the FastAPI app
 app = FastAPI()
 @app.api_route("/health", methods=["GET", "HEAD"])
