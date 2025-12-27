@@ -18,9 +18,11 @@ import textwrap
 import re
 import unicodedata
 import enum
+import signal
+import sys
 from fastapi import FastAPI
 import uvicorn
-
+import re  # Add this line at the top with other imports
 # The client will automatically use the GOOGLE_API_KEY environment variable
 # Make sure to set GOOGLE_API_KEY in your .env file
 from discord.ui import Button, View, Select
@@ -105,17 +107,23 @@ TERMINAL_ADMINS = {
     1329161792936476683  # User 2 (The one you just added)
 }
 # --- PASTE THE BANNED WORDS HERE ---
+# Rate limiting
+RATE_LIMIT = 5  # Number of requests
+RATE_LIMIT_WINDOW = 60  # Time window in seconds
+GENERATION_COUNTER = {}  # {user_id: [timestamp1, timestamp2, ...]}
+
+# Banned words list
 BANNED_WORDS = [
     # Nudity and explicit content
     "nsfw", "naked", "nude", "nudity", "nudist", "naturist", "bikini", "lingerie", "underwear", "panties",
     "topless", "bottomless", "cleavage", "upskirt", "downblouse", "explicit", "xxx", "porn", "porno", "pornography",
-    "hentai", "ecchi", "r34", "rule34", "lewds", "lewd", "suggestive", "provocative", "seductive", "erotic",
+    "hentai", "ecchi", "r34", "rule34", "lewds", "lewd", "suggestive", "provocative", "seductive", "erotic", "skin",
     
     # Body parts (explicit)
     "breasts", "boobs", "tits", "titties", "nipples", "areola", "areolas", "cleavage", "clevage", "clev",
     "vagina", "pussy", "pussies", "vulva", "labia", "clit", "clitoris", "penis", "dick", "cock", "dildo", "dicks", 
     "cocks", "balls", "testicles", "testes", "scrotum", "ass", "asshole", "arse", "arsehole", "butt", "buttocks",
-    "anus", "anal", "butthole", "rectum", "bum", "bums", "booty", "twerking", "thong", "g-string", "gstring","skin"
+    "anus", "anal", "butthole", "rectum", "bum", "bums", "booty", "twerking", "thong", "g-string", "gstring",
     
     # Sexual content
     "sex", "sexual", "sexy", "sexuality", "intercourse", "fuck", "fucking", "fucker", "fucked", "fucks",
@@ -135,7 +143,6 @@ BANNED_WORDS = [
     "secks", "s3x", "s3xy", "sexy", "sexe", "sexi", "sexii", "sexiii", "sexiiii", "sexiiiii",
     "fuk", "fuking", "fukin", "fuker", "fuked", "fukkin", "fukking", "fukn", "fukr", "fukw",
     "d1ck", "d1ckhead", "d1ckwad", "d1ckface", "d1ckhead", "d1ckwad", "d1ckface",
-    "penis", "dick", "boobs", "vagina", "pussy", "ass", "nude", "token",
     "testicales", "testicle", "testes", "genital", "breast", "butt", "buttock", "backshots",
     # Common bypass attempts
     "p0rn", "s3x", "s3xy", "a$$", "@$$", "b00b", "b00bs", "v4g1n4",
@@ -1981,58 +1988,181 @@ GENERATION_COUNTER = defaultdict(list)
 RATE_LIMIT = 2  # 2 generations
 RATE_LIMIT_WINDOW = 60  # per 60 seconds
 
-import discord
-from discord.ext import commands
 import aiohttp
 import urllib.parse
 import io
+import time
+from discord import app_commands
 
-# --- Add this command to your bot ---
+# Rate limiting
+GENERATION_COUNTER = {}
+RATE_LIMIT = 2  # 2 generations
+RATE_LIMIT_WINDOW = 60  # per 60 seconds
 
-import discord
-from discord.ext import commands
-import aiohttp
-import urllib.parse
-import io
+async def generate_image(prompt: str, model: str = "turbo"):
+    """Generate an image using Pollinations AI"""
+    # Encode the prompt for the URL
+    encoded_prompt = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model={model}&width=1024&height=1024&nologo=true"
+    
+    # Download the image from Pollinations
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                return await response.read()
+            else:
+                raise Exception(f"API returned status {response.status}")
+
+# Slash command
+from contextlib import nullcontext  # Add this at the top with other imports
+
+# Slash command
+@bot.tree.command(name="generate", description="Generate an image using AI")
+@app_commands.describe(
+    prompt="The text prompt to generate an image from",
+    model="The model to use (turbo or flux)"
+)
+async def generate_slash(interaction: discord.Interaction, prompt: str, model: str = "turbo"):
+    """Generate an image using AI (slash command)"""
+    # Check for banned words
+    prompt_lower = prompt.lower()
+    for word in BANNED_WORDS:
+        if word in prompt_lower:
+            print(f"Blocked prompt containing banned word: {word}")
+            await interaction.response.send_message(
+                "❌ This prompt contains content that violates our guidelines.",
+                ephemeral=True
+            )
+            return
+    
+    # Validate model
+    model = model.lower()
+    if model not in ["turbo", "flux"]:
+        await interaction.response.send_message(
+            "❌ Invalid model. Please use 'turbo' or 'flux'.",
+            ephemeral=True
+        )
+        return
+    
+    # Defer the response to prevent timeout
+    await interaction.response.defer(thinking=True)
+    
+    # Call the shared handler
+    await handle_generate(interaction, prompt, model)
 
 @bot.command(name='generate', aliases=['photo', 'pic', 'imagine'])
-async def generate_photo(ctx, *, prompt: str):
-    """Generates an image using Pollinations AI. Usage: !generate <prompt>"""
-    try:
-        # 1. Show the bot is "typing" while the image is being created
-        async with ctx.typing():
-            
-            # 2. Encode the prompt for the URL
-            encoded_prompt = urllib.parse.quote(prompt)
-            
-            # Use 'turbo' for the fastest generation speed
-            # Use 'flux' for the highest quality (slightly slower)
-            model = "turbo" 
-            url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model={model}&width=1024&height=1024&nologo=true"
+async def generate_prefix(ctx, *, prompt: str):
+    """Generate an image using AI (prefix command)"""
+    # For prefix commands, we use the default 'turbo' model
+    await handle_generate(ctx, prompt)
 
-            # 3. Download the image from Pollinations
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        image_data = await response.read()
-                        
-                        # 4. Turn the raw data into a Discord file
-                        file_buffer = io.BytesIO(image_data)
-                        file_buffer.seek(0)
-                        file = discord.File(fp=file_buffer, filename='pollination_image.png')
-                        
-                        # 5. Send the photo to the channel
-                        embed = discord.Embed(title=f"🎨 Generated: {prompt[:100]}")
-                        embed.set_image(url="attachment://pollination_image.png")
-                        embed.set_footer(text=f"Model: {model} | Pollinations.ai")
-                        
-                        await ctx.send(embed=embed, file=file)
-                    else:
-                        await ctx.send(f"❌ Error: Could not generate image (Status {response.status})")
+# Add this near the top with other constants
+BANNED_WORDS = [
+    # Nudity and explicit content
+    "nsfw", "naked", "nude", "nudity", "nudist", "naturist", "bikini", "lingerie", "underwear", "panties",
+    "topless", "bottomless", "cleavage", "upskirt", "downblouse", "explicit", "xxx", "porn", "porno", "pornography",
+    "hentai", "ecchi", "r34", "rule34", "lewds", "lewd", "suggestive", "provocative", "seductive", "erotic",
+    
+    # Body parts (explicit)
+    "breasts", "boobs", "tits", "titties", "nipples", "areola", "areolas", "cleavage", "clevage", "clev",
+    "vagina", "pussy", "pussies", "vulva", "labia", "clit", "clitoris", "penis", "dick", "cock", "dildo", "dicks", 
+    "cocks", "balls", "testicles", "testes", "scrotum", "ass", "asshole", "arse", "arsehole", "butt", "buttocks",
+    "anus", "anal", "butthole", "rectum", "bum", "bums", "booty", "twerking", "thong", "g-string", "gstring", "skin",
+    
+    # Sexual content
+    "sex", "sexual", "sexy", "sexuality", "intercourse", "fuck", "fucking", "fucker", "fucked", "fucks",
+    "screw", "screwing", "screwed", "screws", "fellate", "fellatio", "blowjob", "blow job", "handjob", "hand job",
+    "bj", "hj", "orgasm", "orgasmic", "orgasms", "masturbat", "jerk off", "jerkoff", "jacking off", "wank",
+    "wanking", "wanker", "ejaculat", "cum", "semen", "sperm", "creampie", "cream pie", "cowgirl", "doggy style",
+    "missionary", "69", "sixty nine", "sixtynine", "kamasutra", "kama sutra", "kinky", "bdsm", "bondage", "domination",
+    "submission", "submissive", "dominant", "domme", "dom", "sub", "slave", "master", "mistress", "fetish",
+    
+    # Violence and gore
+    "gore", "gory", "blood", "bloody", "violence", "violent", "brutal", "brutality", "torture", "torturing",
+    "mutilat", "decapitat", "behead", "beheading", "dismember", "dismemberment", "cannibal", "cannibalism",
+    "snuff", "snuff film", "snuff movie", "guro", "gurokawa", "ryona", "vore", "scat", "scatology", "coprophilia",
+    
+    # Common misspellings and variations
+    "pron", "p0rn", "pr0n", "porn0", "p0rn0", "pr0n0", "porn0graphy", "p0rn0graphy", "pr0n0graphy",
+    "secks", "s3x", "s3xy", "sexy", "sexe", "sexi", "sexii", "sexiii", "sexiiii", "sexiiiii",
+    "fuk", "fuking", "fukin", "fuker", "fuked", "fukkin", "fukking", "fukn", "fukr", "fukw",
+    "d1ck", "d1ckhead", "d1ckwad", "d1ckface", "d1ckhead", "d1ckwad", "d1ckface",
+    "penis", "dick", "boobs", "vagina", "pussy", "ass", "nude", "token",
+    "testicales", "testicle", "testes", "genital", "breast", "butt", "buttock", "backshots",
+    # Common bypass attempts
+    "p0rn", "s3x", "s3xy", "a$$", "@$$", "b00b", "b00bs", "v4g1n4",
+    # Common misspellings
+    "t3st1cl3s", "t3st1cl3", "t3st1c13s", "t3st1c1e5", "t3st1c135",
+    "t35t1cl35", "t35t1cl3", "t35t1c13s", "t35t1c1e5", "t35t1c135"
+]
 
-    except Exception as e:
-        print(f"Error in photo command: {e}")
-        await ctx.send("⚠️ I ran into an error trying to make that photo.")
+async def handle_generate(context, prompt: str, model: str = "turbo"):
+    """Handle both slash and prefix commands"""
+    # Check for banned words (double check for prefix commands)
+    prompt_lower = prompt.lower()
+    for word in BANNED_WORDS:
+        if word in prompt_lower:
+            print(f"Blocked prompt in handle_generate containing banned word: {word}")
+            if hasattr(context, 'response') and not context.response.is_done():
+                await context.response.send_message(
+                    "❌ This prompt contains content that violates our guidelines.",
+                    ephemeral=True
+                )
+            else:
+                await context.send("❌ This prompt contains content that violates our guidelines.")
+            return
+            
+    # Rate limiting
+    current_time = time.time()
+    user_id = str(getattr(context, 'author', getattr(context, 'user')).id)
+    
+    # Get or initialize user's generation timestamps
+    user_timestamps = [t for t in GENERATION_COUNTER.get(user_id, []) 
+                      if current_time - t < RATE_LIMIT_WINDOW]
+    
+    if len(user_timestamps) >= RATE_LIMIT:
+        remaining = int(RATE_LIMIT_WINDOW - (current_time - user_timestamps[0]))
+        msg = f"⏱️ Rate limited! Please wait {remaining} seconds before generating another image."
+        if hasattr(context, 'response') and not context.response.is_done():
+            await context.response.send_message(msg, ephemeral=True)
+        else:
+            await context.send(msg)
+        return
+    
+    # Update rate limit
+    GENERATION_COUNTER[user_id] = user_timestamps + [current_time]
+    
+    # Show typing indicator
+    async with context.typing() if hasattr(context, 'typing') else nullcontext():
+        try:
+            # Defer for slash commands
+            if hasattr(context, 'response') and not context.response.is_done():
+                await context.response.defer(thinking=True)
+            
+            # Generate the image
+            image_data = await generate_image(prompt, model)
+            
+            # Create and send the image
+            file = discord.File(io.BytesIO(image_data), filename='generated.png')
+            embed = discord.Embed(title=f"🎨 Generated: {prompt[:100]}")
+            embed.set_image(url="attachment://generated.png")
+            embed.set_footer(text=f"Model: {model} | Pollinations.ai")
+            
+            # Send response based on context
+            if hasattr(context, 'followup'):
+                await context.followup.send(embed=embed, file=file)
+            else:
+                await context.send(embed=embed, file=file)
+                
+        except Exception as e:
+            error_msg = f"⚠️ Error generating image: {str(e)}"
+            print(f"Error in generate command: {e}")
+            if hasattr(context, 'followup'):
+                await context.followup.send(error_msg, ephemeral=True)
+            elif hasattr(context, 'response') and not context.response.is_done():
+                await context.response.send_message(error_msg, ephemeral=True)
+            else:
+                await context.send(error_msg)
     
 # Create the FastAPI app
 app = FastAPI()
@@ -2295,7 +2425,25 @@ async def on_ready():
         import traceback
         traceback.print_exc()
 
+# Add signal handling for graceful shutdown
+def signal_handler(sig, frame):
+    print('\nShutting down gracefully...')
+    # Add any cleanup code here if needed
+    sys.exit(0)
+
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    # Set up signal handlers for clean shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        # Run the main bot function
+        import asyncio
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nBot stopped by user")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        print("Bot has been shut down")
 
