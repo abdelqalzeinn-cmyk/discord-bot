@@ -1,3 +1,4 @@
+
 import os
 import random
 import datetime
@@ -19,6 +20,8 @@ from fastapi import FastAPI
 import uvicorn
 import io
 import discord
+from google.generativeai import types
+import google.generativeai as genai
 from discord.ui import Button, View
 from discord.ext import commands
 from discord import Message, TextChannel, DMChannel
@@ -1365,7 +1368,8 @@ async def on_message(message):
 # ... (rest of the code remains the same)
 
 # --- Place this WITH your other global variables (around line 30) ---
- 
+# Initialize Google Client (Use your actual API key)
+# google_client = genai.Client(api_key="AIzaSyCHoOpWo49JH6cFOe0ybGAn0VeUBBoRk54") 
 
 # --- Place this command near your other commands (e.g. after !ask) ---
 
@@ -1374,38 +1378,36 @@ async def on_message(message):
 
 # --- Replace your existing 'generate' command with this one ---
 @bot.command(name='generate')
-@is_allowed_channel()
-async def generate(ctx, *, prompt: str):
-    """Generates an image using Pollinations.ai (Free, No Billing)"""
+@is_allowed_channel() # Reuse your existing permission check
+async def generate_image(ctx, *, prompt: str):
+    """Generate an image using Gemini 2.5 Flash"""
+    if ctx.author.id not in ALLOWED_USERS:
+        return await ctx.send("You don't have permission to generate images.")
+
+    # Check for banned words using your BANNED_WORDS list
+    if any(word in prompt.lower() for word in BANNED_WORDS):
+        return await ctx.send("That prompt contains restricted words.")
+
+    msg = await ctx.send("🎨 Generating your image... please wait.")
     
-    # 1. Send status message
-    msg = await ctx.send(f"🎨 **Generating** image for: `{prompt}`...")
-
     try:
-        # 2. Construct the URL (Pollinations API)
-        # We encode the prompt to be URL-safe
-        encoded_prompt = prompt.replace(" ", "%20")
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&model=flux&nologo=true"
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=[prompt],
+            config=types.GenerateContentConfig(response_modalities=["IMAGE"])
+        )
 
-        # 3. Fetch the image
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as response:
-                if response.status == 200:
-                    # Read image data
-                    image_data = await response.read()
-                    
-                    # 4. Send to Discord
-                    with io.BytesIO(image_data) as binary_img:
-                        binary_img.seek(0)
-                        await ctx.send(file=discord.File(fp=binary_img, filename="generated_image.png"))
-                    
-                    # Delete the status message
-                    await msg.delete()
-                else:
-                    await msg.edit(content=f"❌ **Error:** API returned status {response.status}")
+        for part in response.parts:
+            if part.inline_data:
+                image_bytes = io.BytesIO(part.inline_data.data)
+                file = discord.File(fp=image_bytes, filename="result.png")
+                await ctx.send(content=f"**Result for:** {prompt}", file=file)
+                await msg.delete()
+                return
 
+        await msg.edit(content="Gemini couldn't generate that image. Try a different prompt.")
     except Exception as e:
-        await msg.edit(content=f"❌ **Error:** {str(e)}")
+        await msg.edit(content=f"Error: {str(e)}")
 # Create the FastAPI app
 app = FastAPI()
 @app.api_route("/health", methods=["GET", "HEAD"])
@@ -1559,4 +1561,3 @@ if __name__ == "__main__":
     
     # 2. Run the bot with the token from environment variables
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
-
