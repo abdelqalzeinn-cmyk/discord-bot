@@ -112,7 +112,7 @@ BANNED_WORDS = [
     "breasts", "boobs", "tits", "titties", "nipples", "areola", "areolas", "cleavage", "clevage", "clev",
     "vagina", "pussy", "pussies", "vulva", "labia", "clit", "clitoris", "penis", "dick", "cock", "dildo", "dicks", 
     "cocks", "balls", "testicles", "testes", "scrotum", "ass", "asshole", "arse", "arsehole", "butt", "buttocks",
-    "anus", "anal", "butthole", "rectum", "bum", "bums", "booty", "twerking", "thong", "g-string", "gstring",
+    "anus", "anal", "butthole", "rectum", "bum", "bums", "booty", "twerking", "thong", "g-string", "gstring","skin"
     
     # Sexual content
     "sex", "sexual", "sexy", "sexuality", "intercourse", "fuck", "fucking", "fucker", "fucked", "fucks",
@@ -366,11 +366,11 @@ async def on_ready():
     print(f'[BOT] Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     await bot.change_presence(activity=discord.Game(name="with Python"))
-@bot.command(name='hello')
+@bot.slash_command(name='hello', description='Greet the bot')
 async def hello(ctx):
     """Greet the bot"""
     await send_long_message(ctx, random.choice(RESPONSES['hello']))
-@bot.command(name='joke')
+@bot.slash_command(name='joke', description='Tell a random joke')
 async def tell_joke(ctx):
     """Tell a random joke"""
     try:
@@ -393,11 +393,11 @@ async def tell_joke(ctx):
         # Fallback to local jokes if there's an error
         print(f"Error fetching joke: {e}")
         await ctx.send(random.choice(JOKES))
-@bot.command(name='quote')
+@bot.slash_command(name='quote', description='Get a random inspirational quote')
 async def get_quote(ctx):
     """Get a random inspirational quote"""
     await send_long_message(ctx, random.choice(RESPONSES['quote']))
-@bot.command(name='fact')
+@bot.slash_command(name='fact', description='Get a random interesting fact')
 async def get_fact(ctx):
     """Get a random interesting fact"""
     facts = [
@@ -418,20 +418,20 @@ async def get_fact(ctx):
         "A human's little finger contributes over 50% of the hand's strength."
     ]
     await send_long_message(ctx, random.choice(facts))
-@bot.command(name='time')
+@bot.slash_command(name='time', description='Get the current time')
 async def get_time(ctx):
     """Get the current time"""
     now = datetime.datetime.now()
     await send_long_message(ctx, f"⏰ The current time is: {now.strftime('%I:%M %p')}")
-@bot.command(name='remindme')
+@bot.slash_command(name='remindme', description='Set a reminder')
 async def set_reminder(ctx, time, *, message):
     """Set a reminder"""
     await send_long_message(ctx, f"⏰ I'll remind you to \"{message}\" in {time}")
-@bot.command(name='dontgiveup')
+@bot.slash_command(name='dontgiveup', description='Get encouragement when you\'re feeling down')
 async def encourage(ctx):
     """Get encouragement when you're feeling down"""
     await send_long_message(ctx, random.choice(RESPONSES['encourage']))
-@bot.command(name='afk')
+@bot.slash_command(name='afk', description='Set yourself as AFK with an optional reason')
 async def set_afk(ctx, *, reason: str = "AFK"):
     """Set yourself as AFK with an optional reason"""
     user_id = ctx.author.id
@@ -447,7 +447,7 @@ async def set_afk(ctx, *, reason: str = "AFK"):
     except:
         pass  # No permission to change nickname
     await send_long_message(ctx, f"{ctx.author.mention} is now AFK: {reason} ‍")
-@bot.command(name='clear')
+@bot.slash_command(name='clear', description='Clear the conversation history for this channel')
 async def clear_history(ctx):
     """Clear the conversation history for this channel"""
     if ctx.channel.id in conversation_history:
@@ -458,7 +458,7 @@ async def clear_history(ctx):
         await send_long_message(ctx, "Conversation history cleared! ")
     else:
         await send_long_message(ctx, "No conversation history to clear.")
-@bot.command(name='helpme', aliases=['cmds', 'commands'])
+@bot.slash_command(name='help', description='Show all available commands organized by categories')
 async def help_command(ctx):
     """Show all available commands organized by categories"""
     try:
@@ -511,7 +511,7 @@ async def help_command(ctx):
         await send_long_message(ctx, full_message)
     except Exception as e:
         print(f"Error in help command: {e}")
-@bot.command(name='reload')
+@bot.slash_command(name='reload', description='Reload the bot (Admin only)')
 @is_allowed_channel()
 async def reload_bot(ctx):
     """Reload the bot (Admin only)"""
@@ -524,7 +524,7 @@ async def reload_bot(ctx):
     bot.active_games.clear()
     # Restart the bot
     os.execv(sys.executable, ['python'] + sys.argv)
-@bot.command(name='terminal', aliases=['eval', 'exec'])
+@bot.slash_command(name='terminal', description='Runs python code (Restricted to admins)')
 async def internal_terminal(ctx, *, body: str):
     """Runs python code (Restricted to two specific users)"""
     # Check if the user is one of the two allowed admins
@@ -548,7 +548,7 @@ async def internal_terminal(ctx, *, body: str):
         await ctx.send(f"```py\n{value or 'Success (no output)'}```")
     except Exception:
         await ctx.send(f"```py\n{traceback.format_exc()}```")
-@bot.command(name='echo')
+@bot.slash_command(name='echo', description='Make the bot repeat your message')
 async def echo_message(ctx, *, message: str):
     """
     Make the bot repeat your message in the current channel
@@ -574,7 +574,7 @@ async def echo_message(ctx, *, message: str):
             await error_msg.delete()
         except:
             pass
-@bot.command(name='trivia')
+@bot.slash_command(name='trivia', description='Get a random trivia question with interactive buttons')
 async def trivia(ctx, category: str = None):
     """Get a random trivia question with interactive buttons!"""
     categories = {
@@ -702,12 +702,12 @@ class RPSView(discord.ui.View):
         for item in self.children:
             item.disabled = True
         await self.message.edit(view=self)
-@bot.command(name='rps')
+@bot.slash_command(name='rps', description='Play Rock-Paper-Scissors with the bot')
 async def rock_paper_scissors(ctx):
     """Play Rock-Paper-Scissors with the bot"""
     view = RPSView()
     view.message = await send_long_message(ctx, "Choose your move:", view=view)
-@bot.command()
+@bot.slash_command(name='hangman', description='Start a game of Hangman')
 async def hangman(ctx):
     """Start a game of Hangman"""
     channel_id = ctx.channel.id
@@ -825,7 +825,7 @@ class HangmanView(discord.ui.View):
             view=self
         )
         self.stop()  # Stop the view
-@bot.command(name='guess_letter')
+@bot.slash_command(name='guess_letter', description='Guess a letter in Hangman')
 async def guess_letter(ctx, letter: str):
     """This command is no longer used. Please use the buttons in the Hangman game interface to guess letters."""
     await send_long_message(ctx, "Please use the buttons in the Hangman game interface to guess letters.")
@@ -839,7 +839,7 @@ async def guess_letter(ctx, letter: str):
             f"Incorrect guesses: {game.incorrect_guesses}/{game.max_attempts}\n"
             f"{game.get_hangman()}"
         )
-@bot.command(name='quiz')
+@bot.slash_command(name='quiz', description='Start a new quiz game')
 @is_allowed_channel()
 async def start_quiz(ctx):
     """Start a new quiz game"""
@@ -880,7 +880,7 @@ async def ask_quiz_question(ctx, game):
         "• Type the full text of your answer\n\n"
         "Example: `A` or `Python` are both valid answers!"
     )
-@bot.command(name='answer')
+@bot.slash_command(name='answer', description='Answer the current quiz question')
 @is_allowed_channel()
 async def answer_question(ctx, *, user_answer: str):
     """Answer the current quiz question"""
@@ -919,7 +919,7 @@ async def answer_question(ctx, *, user_answer: str):
         await ctx.send(f" Quiz complete! Your score: {game.score}/{game.total_questions}")
         if channel_id in bot.active_games:
             del bot.active_games[channel_id]
-@bot.command(name='stop')
+@bot.slash_command(name='stop', description='Stop the current game in this channel')
 @is_allowed_channel()
 async def stop_game(ctx):
     """Stop the current game in this channel"""
@@ -1035,7 +1035,7 @@ class TicTacToeView(discord.ui.View):
             view=self
         )
         self.stop()  # Stop the view
-@bot.command(name='tictactoe', aliases=['ttt'])
+@bot.slash_command(name='tictactoe', description='Start a Tic Tac Toe game')
 @is_allowed_channel()
 async def tictactoe(ctx, opponent: discord.Member = None, difficulty: str = 'medium'):
     """Start a Tic Tac Toe game
@@ -1112,7 +1112,7 @@ async def tictactoe(ctx, opponent: discord.Member = None, difficulty: str = 'med
         view=view
     )
     view.message = message
-@bot.command(name='listgames')
+@bot.slash_command(name='listgames', description='List all available games')
 @is_allowed_channel()
 async def list_games(ctx):
     """List all available games"""
@@ -1207,7 +1207,7 @@ async def get_ai_response(ctx, question):
         print(error_msg)
         return "I'm having trouble processing your request right now. Please try again later."
         
-@bot.command(name='ask')
+@bot.slash_command(name='ask', description='Ask the AI a question with conversation history')
 @is_allowed_channel()
 async def ask_ai(ctx, *, question):
     """Ask the AI a question with conversation history"""
@@ -1496,7 +1496,7 @@ def contains_banned_word(text, banned_words):
         'reproductive', 'genital', 'organ', 'penis', 'vagina', 'testicl', 'testes', 
         'scrotum', 'vulva', 'labia', 'clitoris', 'breast', 'areola', 'nipple',
         'anus', 'rectum', 'buttock', 'pubic', 'pelvic', 'semen', 'sperm', 'penile',
-        'vaginal', 'anal', 'sexual', 'sex', 'nude', 'naked', 'exposed'
+        'vaginal', 'anal', 'sexual', 'sex', 'nude', 'naked', 'exposed','skin'
     ]
     
     # Check for any blocked terms
@@ -1513,7 +1513,7 @@ def contains_banned_word(text, banned_words):
                     return banned
                     
     return None
-@bot.command(name='report')
+@bot.slash_command(name='report', description='Report a false positive in content filtering')
 async def report_false_positive(ctx, *, reason: str):
     """Report a false positive in the content filter"""
     channel = bot.get_channel(MODERATION_CHANNEL_ID)
@@ -1546,7 +1546,7 @@ GENERATION_COUNTER = defaultdict(list)
 RATE_LIMIT = 2  # 2 generations
 RATE_LIMIT_WINDOW = 60  # per 60 seconds
 
-@bot.command(name='generate')
+@bot.slash_command(name='generate', description='Generate an image from text')
 @commands.cooldown(2, 10, commands.BucketType.user)
 async def fast_generate(ctx, *, prompt: str):
     """Generate images faster using flux-schnell model (2 per minute limit)"""
@@ -1628,7 +1628,7 @@ def run_web():
                 print(f"[WEB] Error starting server on port {port}: {e}")
                 break
 
-@bot.command(name='say')
+@bot.slash_command(name='say', description='Make the bot say something in the current channel')
 @commands.has_permissions(manage_messages=True)
 async def say_message(ctx, *, message: str):
     """Make the bot say something in the current channel"""
@@ -1643,7 +1643,7 @@ async def say_message(ctx, *, message: str):
     except Exception as e:
         await ctx.send(f"Failed to send message: {e}", delete_after=10)
 
-@bot.command(name='sayin')
+@bot.slash_command(name='sayin', description='Make the bot say something in a specific channel')
 @commands.has_permissions(manage_messages=True)
 async def say_in_channel(ctx, channel: discord.TextChannel, *, message: str):
     """Make the bot say something in a specific channel"""
