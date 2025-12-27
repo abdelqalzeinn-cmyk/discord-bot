@@ -35,22 +35,29 @@ import unicodedata
 
 def is_suspicious(prompt: str) -> bool:
     """Check if a prompt contains suspicious patterns"""
-    # Check for excessive special characters
-    if len(re.findall(r'[!@#$%^&*()_+{}\[\]:;<>,.?~\\/-]', prompt)) > len(prompt) * 0.3:
+    # Skip empty or very short prompts
+    if len(prompt) < 5:
+        return False
+        
+    # Check for excessive special characters (more than 40% of the prompt)
+    special_chars = len(re.findall(r'[!@#$%^&*()_+{}\[\]:;<>,.?~\\/-]', prompt))
+    if special_chars > len(prompt) * 0.4:
         return True
     
-    # Check for excessive numbers
-    if len(re.findall(r'\d', prompt)) > len(prompt) * 0.3:
+    # Check for excessive numbers (more than 40% of the prompt)
+    numbers = len(re.findall(r'\d', prompt))
+    if numbers > len(prompt) * 0.4:
         return True
     
-    # Check for suspicious patterns
+    # Check for suspicious patterns (only if they appear multiple times)
     suspicious_patterns = [
-        r'\.{3,}',  # Multiple dots
-        r'_{3,}',   # Multiple underscores
-        r'-{3,}',   # Multiple dashes
-        r'\s{3,}',  # Multiple spaces
+        r'[\._-]{4,}',  # 4 or more of . _ or -
+        r'\s{4,}',      # 4 or more spaces
     ]
-    return any(re.search(pattern, prompt) for pattern in suspicious_patterns)
+    
+    # Only flag if multiple suspicious patterns are found
+    suspicious_count = sum(1 for pattern in suspicious_patterns if re.search(pattern, prompt))
+    return suspicious_count >= 2
 
 async def log_suspicious_activity(ctx, prompt: str, reason: str):
     """Log suspicious activity to the moderation channel"""
@@ -1450,22 +1457,20 @@ def contains_banned_word(text, banned_words):
     # Normalize the input text
     normalized_text = normalize_text(text)
     
-    # Check for common obfuscation techniques
-    for word in banned_words:
-        # Check direct match
-        if word in normalized_text:
-            return word
-        
-        # Check for common separators between letters
-        pattern = '.*'.join(list(word))
-        if re.search(pattern, normalized_text):
+    # Split into words and check each one
+    words = re.findall(r'[a-z0-9]+', normalized_text)
+    
+    for word in words:
+        # Check for exact match first
+        if word in banned_words:
             return word
             
-        # Check for repeated characters (e.g., 'teest')
-        pattern = word[0] + f'[{word[0]}]*' + word[1:] + f'[{word[-1]}]*'
-        if re.search(pattern, normalized_text):
-            return word
-    
+        # Only check for partial matches in longer words
+        if len(word) > 3:  # Only check for partial matches in words longer than 3 characters
+            for banned in banned_words:
+                if len(banned) > 3 and banned in word:  # Only check for banned words longer than 3 characters
+                    return banned
+                    
     return None
 @bot.command(name='report')
 async def report_false_positive(ctx, *, reason: str):
