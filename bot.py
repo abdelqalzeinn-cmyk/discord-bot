@@ -17,11 +17,7 @@ import contextlib
 import textwrap
 from fastapi import FastAPI
 import uvicorn
-from google import genai
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
 
 # The client will automatically use the GOOGLE_API_KEY environment variable
 # Make sure to set GOOGLE_API_KEY in your .env file
@@ -1574,3 +1570,4 @@ if __name__ == "__main__":
     
     # 2. Run the bot with the token from environment variables
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
+
