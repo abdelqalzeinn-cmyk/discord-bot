@@ -66,7 +66,7 @@ async def log_suspicious_activity(ctx, prompt: str, reason: str):
             )
 
 # Add this with your other constants
-MODERATION_CHANNEL_ID = None  # Set to your moderation channel ID if you have one
+MODERATION_CHANNEL_ID = 1430767506141872228
 
 # Load environment variables
 load_dotenv()
