@@ -15,13 +15,16 @@ import time
 import io
 import contextlib
 import textwrap
-import traceback
 from fastapi import FastAPI
 import uvicorn
-import io
-import discord
-from google.generativeai import types
-import google.generativeai as genai
+from google import genai
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# The client will automatically use the GOOGLE_API_KEY environment variable
+# Make sure to set GOOGLE_API_KEY in your .env file
 from discord.ui import Button, View
 from discord.ext import commands
 from discord import Message, TextChannel, DMChannel
@@ -1377,37 +1380,47 @@ async def on_message(message):
  
 
 # --- Replace your existing 'generate' command with this one ---
+import requests
+import io
+import discord
+from discord.ext import commands
+
 @bot.command(name='generate')
-@is_allowed_channel() # Reuse your existing permission check
+@commands.cooldown(1, 10, commands.BucketType.user) # Stops spam (1 use per 10s)
 async def generate_image(ctx, *, prompt: str):
-    """Generate an image using Gemini 2.5 Flash"""
-    if ctx.author.id not in ALLOWED_USERS:
-        return await ctx.send("You don't have permission to generate images.")
-
-    # Check for banned words using your BANNED_WORDS list
-    if any(word in prompt.lower() for word in BANNED_WORDS):
-        return await ctx.send("That prompt contains restricted words.")
-
-    msg = await ctx.send("🎨 Generating your image... please wait.")
+    """Generate an image for free without any API keys or credit cards"""
     
+    # 1. Simple Permission & Word Checks
+    if ctx.author.id not in ALLOWED_USERS:
+        return await ctx.send("❌ You don't have permission.")
+    if any(word in prompt.lower() for word in BANNED_WORDS):
+        return await ctx.send("❌ Prompt contains restricted words.")
+
+    msg = await ctx.send("🎨 **Pollinations AI** is crafting your image... please wait.")
+
     try:
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash-image",
-            contents=[prompt],
-            config=types.GenerateContentConfig(response_modalities=["IMAGE"])
-        )
+        # 2. Format the URL (Pollinations doesn't need a key!)
+        # We add a random seed so the same prompt can generate different images
+        import random
+        seed = random.randint(0, 99999)
+        encoded_prompt = prompt.replace(" ", "%20")
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}&width=1024&height=1024&nologo=true"
 
-        for part in response.parts:
-            if part.inline_data:
-                image_bytes = io.BytesIO(part.inline_data.data)
-                file = discord.File(fp=image_bytes, filename="result.png")
-                await ctx.send(content=f"**Result for:** {prompt}", file=file)
-                await msg.delete()
-                return
+        # 3. Download the image
+        response = requests.get(image_url, timeout=30)
+        
+        if response.status_code == 200:
+            # 4. Turn the raw data into a Discord-friendly file
+            image_data = io.BytesIO(response.content)
+            discord_file = discord.File(fp=image_data, filename="ai_generated.png")
+            
+            await ctx.send(content=f"✅ **Generated:** {prompt}", file=discord_file)
+            await msg.delete()
+        else:
+            await msg.edit(content="❌ Pollinations is busy. Try again in a moment.")
 
-        await msg.edit(content="Gemini couldn't generate that image. Try a different prompt.")
     except Exception as e:
-        await msg.edit(content=f"Error: {str(e)}")
+        await msg.edit(content=f"❌ Error: {str(e)}")
 # Create the FastAPI app
 app = FastAPI()
 @app.api_route("/health", methods=["GET", "HEAD"])
