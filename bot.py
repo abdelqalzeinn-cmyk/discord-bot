@@ -59,10 +59,16 @@ TERMINAL_ADMINS = {
 }
 # --- PASTE THE BANNED WORDS HERE ---
 BANNED_WORDS = [
+    # Explicit content
     "nsfw", "naked", "porn", "sex", "gore", "blood", "violence",
     "r34", "hentai", "undress", "bikini", "lingerie",
     "penis", "dick", "boobs", "vagina", "pussy", "ass", "nude", "token",
-    "testicales"
+    "testicales", "testicle", "testes", "genital", "breast", "butt", "buttock", "backshots",
+    # Common bypass attempts
+    "p0rn", "s3x", "s3xy", "a$$", "@$$", "b00b", "b00bs", "v4g1n4",
+    # Common misspellings
+    "t3st1cl3s", "t3st1cl3", "t3st1c13s", "t3st1c1e5", "t3st1c135",
+    "t35t1cl35", "t35t1cl3", "t35t1c13s", "t35t1c1e5", "t35t1c135"
 ]
 # -----------------------------------
 def is_allowed_channel():
@@ -1382,17 +1388,88 @@ import io
 import discord
 from discord.ext import commands
 
+import re
+import unicodedata
+
+def normalize_text(text):
+    # Convert to lowercase
+    text = text.lower()
+    # Remove accents and special characters
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+    # Replace common leet speak and special characters
+    leet_map = {
+        '1': 'i', '!': 'i', '3': 'e', '4': 'a', '@': 'a',
+        '0': 'o', '5': 's', '7': 't', '8': 'b', '$': 's',
+        '9': 'g', '()': 'o', '[]': 'o', '|)': 'd', '|]': 'd',
+        '|=': 'f', 'ph': 'f', 'vv': 'w', 'vvv': 'm', 'vvvv': 'w'
+    }
+    for k, v in leet_map.items():
+        text = text.replace(k, v)
+    # Remove all non-alphanumeric characters
+    text = re.sub(r'[^a-z0-9]', '', text)
+    return text
+
+def contains_banned_word(text, banned_words):
+    # Normalize the input text
+    normalized_text = normalize_text(text)
+    
+    # Check for common obfuscation techniques
+    for word in banned_words:
+        # Check direct match
+        if word in normalized_text:
+            return word
+        
+        # Check for common separators between letters
+        pattern = '.*'.join(list(word))
+        if re.search(pattern, normalized_text):
+            return word
+            
+        # Check for repeated characters (e.g., 'teest')
+        pattern = word[0] + f'[{word[0]}]*' + word[1:] + f'[{word[-1]}]*'
+        if re.search(pattern, normalized_text):
+            return word
+    
+    return None
+@bot.command(name='report')
+async def report_false_positive(ctx, *, reason: str):
+    """Report a false positive in the content filter"""
+    channel = bot.get_channel(MODERATION_CHANNEL_ID)
+    if channel:
+        await channel.send(
+            f"⚠️ False positive report from {ctx.author}:\n"
+            f"Message: {ctx.message.reference.resolved.content if ctx.message.reference else 'No message referenced'}\n"
+            f"Reason: {reason}"
+        )
+        await ctx.send("✅ Your report has been submitted. Thank you for your feedback!")
+
+@bot.command(name='suggestban') 
+async def suggest_ban_word(ctx, *, word: str):
+    """Suggest a word to add to the banned words list"""
+    channel = bot.get_channel(MODERATION_CHANNEL_ID)
+    if channel:
+        await channel.send(
+            f"🔍 New word suggestion from {ctx.author}:\n"
+            f"Word: `{word}`\n"
+            f"Context: {ctx.message.reference.resolved.content if ctx.message.reference else 'No context provided'}"
+        )
+        await ctx.send("✅ Your suggestion has been submitted for review. Thank you!")
+# Update the command to use the new check
 @bot.command(name='generate')
 @commands.cooldown(2, 10, commands.BucketType.user)
 async def fast_generate(ctx, *, prompt: str):
     """Generate images faster using flux-schnell model"""
-    # Check for restricted words first
-    bad_word = next((word for word in BANNED_WORDS if word in prompt.lower()), None)
-    if bad_word:
-        return await ctx.send(f"❌ Sorry, the word '{bad_word}' is not allowed in prompts.")
+    # Check for suspicious patterns first
+    if is_suspicious(prompt):
+        await log_suspicious_activity(ctx, prompt, "Suspicious pattern detected")
+        return await ctx.send("❌ Your request appears to contain suspicious patterns and was flagged for review.")
     
-    if ctx.author.id not in ALLOWED_USERS:
-        return await ctx.send("❌ You don't have permission to use this command.")
+    # Check for banned words
+    bad_word = contains_banned_word(prompt, BANNED_WORDS)
+    if bad_word:
+        await log_suspicious_activity(ctx, prompt, f"Banned word detected: {bad_word}")
+        return await ctx.send("❌ Sorry, that prompt contains content that's not allowed.")
+    
+    # Rest of your command...
         
     msg = await ctx.send("⚡ **Generating your image...**")
     
