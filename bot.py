@@ -1365,8 +1365,7 @@ async def on_message(message):
 # ... (rest of the code remains the same)
 
 # --- Place this WITH your other global variables (around line 30) ---
-# Initialize Google Client (Use your actual API key)
-# google_client = genai.Client(api_key="AIzaSyCHoOpWo49JH6cFOe0ybGAn0VeUBBoRk54") 
+ 
 
 # --- Place this command near your other commands (e.g. after !ask) ---
 
@@ -1560,3 +1559,4 @@ if __name__ == "__main__":
     
     # 2. Run the bot with the token from environment variables
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
+
