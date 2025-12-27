@@ -15,17 +15,19 @@ import time
 import io
 import contextlib
 import textwrap
+import re
+import unicodedata
+import enum
 from fastapi import FastAPI
 import uvicorn
 
-
 # The client will automatically use the GOOGLE_API_KEY environment variable
 # Make sure to set GOOGLE_API_KEY in your .env file
-from discord.ui import Button, View
+from discord.ui import Button, View, Select
 from discord.ext import commands
-from discord import Message, TextChannel, DMChannel, Intents
-from discord_slash import SlashCommand, SlashContext
-from typing import Union
+from discord import app_commands
+from discord import Message, TextChannel, DMChannel, Intents, Interaction
+from typing import Union, List, Dict, Optional
 from dotenv import load_dotenv
 from jokes import JOKES
 from typing import Dict, List, Optional, Union
@@ -256,35 +258,63 @@ async def send_long_message(destination: Union[TextChannel, DMChannel], content:
             if i < len(chunks) - 1:
                 chunk = chunk.rstrip('.,!?') + '...'
             # Send the chunk with error handling
-            await destination.send(chunk, **kwargs)
-            # Add a small delay between messages to avoid rate limiting
-            if i < len(chunks) - 1:
-                await asyncio.sleep(0.5)
-        except Exception as e:
-            print(f"Error sending message chunk {i+1}/{len(chunks)}: {e}")
-            # Try to send an error message if we can
             try:
-                await destination.send(f"Error sending message part {i+1}: {str(e)[:100]}...")
-            except:
-                pass
+                await destination.send(chunk, **kwargs)
+                # Add a small delay between messages to avoid rate limiting
+                if i < len(chunks) - 1:
+                    await asyncio.sleep(1)  # 1 second delay between messages
+            except discord.HTTPException as e:
+                print(f"Failed to send message chunk: {e}")
+                continue  # Skip to next chunk if one fails
+        except Exception as e:
+            print(f"Error processing message chunk: {e}")
+            continue
+
 # Initialize bot with intents
-intents = Intents.default()
+intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# Initialize bot with prefix commands
-bot = commands.Bot(
-    command_prefix='!',  # Keep for backward compatibility
-    intents=intents,
-    help_command=None  # Disable default help command to implement custom one
-)
+# Initialize bot with prefix commands and tree for slash commands
+class MyBot(commands.Bot):
+    def __init__(self):
+        super().__init__(
+            command_prefix='!',
+            intents=intents,
+            help_command=None
+        )
+        self.synced = False
 
-# Initialize slash commands
-slash = SlashCommand(bot, sync_commands=True)
+    async def setup_hook(self) -> None:
+        # Sync commands on startup
+        if not self.synced:
+            # Copy global commands to current guild for faster testing
+            guild = discord.Object(id=1440330105799839856)  # Replace with your guild ID
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            self.synced = True
+            print(f"Synced slash commands for {guild.id}")
+
+# Initialize the bot
+bot = MyBot()
+
+# Set up a simple event to confirm bot is ready
+@bot.event
+async def on_ready():
+    print(f'[BOT] Logged in as {bot.user} (ID: {bot.user.id})')
+    print('------')
+    await bot.change_presence(activity=discord.Game(name="/help for commands"))
+
+# Simple ping command to test slash commands
+@bot.tree.command(name="ping", description="Check if the bot is responding")
+async def ping(interaction: discord.Interaction):
+    """Simple ping command to test if the bot is responding"""
+    await interaction.response.send_message("Pong! 🏓", ephemeral=True)
 
 # Initialize bot attributes
 bot.trivia_questions = {}  # Initialize trivia_questions dictionary
 bot.scheduled_messages = []  # Store scheduled messages
+
 # Enhanced responses with more context
 RESPONSES = {
     'hello': [
@@ -381,12 +411,14 @@ async def on_ready():
     print(f'[BOT] Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     await bot.change_presence(activity=discord.Game(name="with Python"))
-@slash.slash(name='hello', description='Greet the bot')
-async def hello(ctx):
+    
+@bot.tree.command(name='hello', description='Greet the bot')
+async def hello(interaction: discord.Interaction):
     """Greet the bot"""
-    await send_long_message(ctx, random.choice(RESPONSES['hello']))
-@slash.slash(name='joke', description='Tell a random joke')
-async def tell_joke(ctx):
+    await interaction.response.send_message(random.choice(RESPONSES['hello']))
+
+@bot.tree.command(name='joke', description='Tell a random joke')
+async def tell_joke(interaction: discord.Interaction):
     """Tell a random joke"""
     try:
         async with aiohttp.ClientSession() as session:
@@ -395,25 +427,26 @@ async def tell_joke(ctx):
                 if response.status == 200:
                     joke_data = await response.json()
                     if 'joke' in joke_data:
-                        await send_long_message(ctx, joke_data['joke'])
+                        await interaction.response.send_message(joke_data['joke'])
                     elif 'setup' in joke_data and 'delivery' in joke_data:
-                        await send_long_message(ctx, f"{joke_data['setup']}\n\n{joke_data['delivery']}")
+                        await interaction.response.send_message(f"{joke_data['setup']}\n\n{joke_data['delivery']}")
                     else:
                         # Fallback to local jokes if API response is unexpected
-                        await send_long_message(ctx, random.choice(JOKES))
+                        await interaction.response.send_message(random.choice(JOKES))
                 else:
                     # Fallback to local jokes if API is down
-                    await ctx.send(random.choice(JOKES))
+                    await interaction.response.send_message(random.choice(JOKES))
     except Exception as e:
         # Fallback to local jokes if there's an error
         print(f"Error fetching joke: {e}")
-        await ctx.send(random.choice(JOKES))
-@slash.slash(name='quote', description='Get a random inspirational quote')
-async def get_quote(ctx):
+        await interaction.response.send_message(random.choice(JOKES))
+@bot.tree.command(name='quote', description='Get a random inspirational quote')
+async def get_quote(interaction: discord.Interaction):
     """Get a random inspirational quote"""
-    await send_long_message(ctx, random.choice(RESPONSES['quote']))
-@slash.slash(name='fact', description='Get a random interesting fact')
-async def get_fact(ctx):
+    await interaction.response.send_message(random.choice(RESPONSES['quote']))
+
+@bot.tree.command(name='fact', description='Get a random interesting fact')
+async def get_fact(interaction: discord.Interaction):
     """Get a random interesting fact"""
     facts = [
         "Honey never spoils. Archaeologists have found pots of honey in ancient Egyptian tombs that are over 3,000 years old and still perfectly edible!",
@@ -430,56 +463,60 @@ async def get_fact(ctx):
         "A bolt of lightning contains enough energy to toast 100,000 slices of bread.",
         "There are more fake flamingos in the world than real ones.",
         "The shortest war in history was between Britain and Zanzibar in 1896. Zanzibar surrendered after 38 minutes.",
-        "A human's little finger contributes over 50% of the hand's strength."
+        "A human's little finger contributes over 50% of the hand's strength.",
+        "The inventor of the frisbee was turned into a frisbee after he died.",
+        "Some cats are actually allergic to humans."
     ]
-    await send_long_message(ctx, random.choice(facts))
-@slash.slash(name='time', description='Get the current time')
-async def get_time(ctx):
+    await interaction.response.send_message(random.choice(facts))
+@bot.tree.command(name='time', description='Get the current time')
+async def get_time(interaction: discord.Interaction):
     """Get the current time"""
     now = datetime.datetime.now()
-    await send_long_message(ctx, f"⏰ The current time is: {now.strftime('%I:%M %p')}")
-@slash.slash(name='remindme', description='Set a reminder',
-             options=[
-                 {"name": "time", "description": "When to remind (e.g., 1h, 30m, 2d)", "type": 3, "required": True},
-                 {"name": "message", "description": "The reminder message", "type": 3, "required": True}
-             ])
-async def set_reminder(ctx, time: str, message: str):
+    await interaction.response.send_message(f"⏰ The current time is: {now.strftime('%I:%M %p')}")
+
+@bot.tree.command(name='remindme', description='Set a reminder')
+@app_commands.describe(
+    time="When to remind (e.g., 1h, 30m, 2d)",
+    message="The reminder message"
+)
+async def set_reminder(interaction: discord.Interaction, time: str, message: str):
     """Set a reminder"""
-    await send_long_message(ctx, f"⏰ I'll remind you to \"{message}\" in {time}")
-@slash.slash(name='encourage', description='Get encouragement when you\'re feeling down')
-async def encourage(ctx):
+    await interaction.response.send_message(f"⏰ I'll remind you to \"{message}\" in {time}")
+@bot.tree.command(name='encourage', description='Get encouragement when you\'re feeling down')
+async def encourage(interaction: discord.Interaction):
     """Get encouragement when you're feeling down"""
-    await send_long_message(ctx, random.choice(RESPONSES['encourage']))
-@slash.slash(name='afk', description='Set yourself as AFK with an optional reason',
-             options=[{"name": "reason", "description": "Reason for being AFK", "type": 3, "required": False}])
-async def set_afk(ctx, reason: str = "AFK"):
+    await interaction.response.send_message(random.choice(RESPONSES['encourage']))
+
+@bot.tree.command(name='afk', description='Set yourself as AFK with an optional reason')
+@app_commands.describe(reason="Reason for being AFK")
+async def set_afk(interaction: discord.Interaction, reason: str = "AFK"):
     """Set yourself as AFK with an optional reason"""
-    user_id = ctx.author_id
+    user_id = interaction.user.id
     afk_users[user_id] = {
         'reason': reason,
         'time': datetime.datetime.now(),
-        'original_nick': ctx.author.display_name
+        'original_nick': interaction.user.display_name
     }
     # Try to update nickname if possible
     try:
-        if ctx.guild:
-            await ctx.author.edit(nick=f"[AFK] {ctx.author.display_name[:26]}")
+        if interaction.guild:
+            await interaction.user.edit(nick=f"[AFK] {interaction.user.display_name[:26]}")
     except:
         pass  # No permission to change nickname
-    await send_long_message(ctx, f"{ctx.author.mention} is now AFK: {reason} ‍")
-@slash.slash(name='clear', description='Clear the conversation history for this channel')
-async def clear_history(ctx):
+    await interaction.response.send_message(f"{interaction.user.mention} is now AFK: {reason} ‍")
+@bot.tree.command(name='clear', description='Clear the conversation history for this channel')
+async def clear_history(interaction: discord.Interaction):
     """Clear the conversation history for this channel"""
-    if ctx.channel_id in conversation_history:
+    if interaction.channel_id in conversation_history:
         # Keep only the system message
-        conversation_history[ctx.channel_id] = [
+        conversation_history[interaction.channel_id] = [
             {"role": "system", "content": "You are a helpful assistant."}
         ]
-        await send_long_message(ctx, "Conversation history cleared! ")
+        await interaction.response.send_message("Conversation history cleared!", ephemeral=True)
     else:
-        await send_long_message(ctx, "No conversation history to clear.")
-@slash.slash(name='help', description='Show all available commands organized by categories')
-async def help_command(ctx):
+        await interaction.response.send_message("No conversation history to clear.", ephemeral=True)
+@bot.tree.command(name='help', description='Show all available commands organized by categories')
+async def help_command(interaction: discord.Interaction):
     """Show all available commands organized by categories"""
     try:
         # Main categories
@@ -531,13 +568,13 @@ async def help_command(ctx):
         await send_long_message(ctx, full_message)
     except Exception as e:
         print(f"Error in help command: {e}")
-@slash.slash(name='reload', description='Reload the bot (Admin only)')
+@bot.tree.command(name='reload', description='Reload the bot (Admin only)')
 @is_allowed_channel()
-async def reload_bot(ctx):
+async def reload_bot(interaction: discord.Interaction):
     """Reload the bot (Admin only)"""
-    if ctx.author_id not in TERMINAL_ADMINS:
-        return await ctx.send(" **Restricted:** This command is for authorized admins only.")
-    await send_long_message(ctx, " Reloading bot... This may take a few seconds.")
+    if interaction.user.id not in TERMINAL_ADMINS:
+        return await interaction.response.send_message(" **Restricted:** This command is for authorized admins only.", ephemeral=True)
+    await interaction.response.send_message("Reloading bot... This may take a few seconds.", ephemeral=True)
     import sys
     import os
     # Clear all active games
@@ -545,13 +582,19 @@ async def reload_bot(ctx):
         bot.active_games.clear()
     # Restart the bot
     os.execv(sys.executable, ['python'] + sys.argv)
-@slash.slash(name='terminal', description='Run Python code (Admin only)',
-             options=[{"name": "code", "description": "Python code to execute", "type": 3, "required": True}])
-async def internal_terminal(ctx, code: str):
+@bot.tree.command(name='terminal', description='Run Python code (Admin only)')
+@app_commands.describe(code="Python code to execute")
+async def internal_terminal(interaction: discord.Interaction, code: str):
     """Run Python code (Admin only)"""
     # Check if the user is authorized
-    if ctx.author_id not in TERMINAL_ADMINS:
-        return await ctx.send(" **Restricted:** This command is for authorized terminal admins only.")
+    if interaction.user.id not in TERMINAL_ADMINS:
+        return await interaction.response.send_message(
+            " **Restricted:** This command is for authorized terminal admins only.",
+            ephemeral=True
+        )
+    
+    # Defer the response since this might take a while
+    await interaction.response.defer(ephemeral=True)
     
     # Clean up the code input
     if code.startswith('```'):
@@ -561,8 +604,15 @@ async def internal_terminal(ctx, code: str):
     
     stdout = io.StringIO()
     try:
-        env = {'bot': bot, 'ctx': ctx, 'author': ctx.author}
+        env = {
+            'bot': bot, 
+            'interaction': interaction, 
+            'author': interaction.user,
+            'guild': interaction.guild,
+            'channel': interaction.channel
+        }
         env.update(globals())
+        
         exec_text = f'async def func():\n{textwrap.indent(code, "  ")}'
         exec(exec_text, env)
         func = env['func']
@@ -580,7 +630,7 @@ async def internal_terminal(ctx, code: str):
         if len(result) > 2000:
             result = result[:1990] + "\n... (truncated)"
             
-        await ctx.send(result)
+        await interaction.followup.send(result, ephemeral=True)
         
     except Exception as e:
         error_msg = f"```py\n{traceback.format_exc()}"
@@ -591,61 +641,74 @@ async def internal_terminal(ctx, code: str):
         if len(error_msg) > 2000:
             error_msg = error_msg[:1990] + "\n... (truncated)"
             
-        await ctx.send(error_msg)
-@slash.slash(name='echo', description='Make the bot repeat your message',
-             options=[{"name": "message", "description": "The message to repeat", "type": 3, "required": True}])
-async def echo_message(ctx, message: str):
+        await interaction.followup.send(error_msg, ephemeral=True)
+@bot.tree.command(name='echo', description='Make the bot repeat your message')
+@app_commands.describe(message="The message to repeat")
+async def echo_message(interaction: discord.Interaction, message: str):
     """Make the bot repeat your message in the current channel"""
     try:
         # Check permissions before sending
-        if not ctx.channel.permissions_for(ctx.author).manage_messages:
-            return await ctx.send("You need 'Manage Messages' permission to use this command.", delete_after=5)
+        if not interaction.channel.permissions_for(interaction.user).manage_messages:
+            return await interaction.response.send_message(
+                "You need 'Manage Messages' permission to use this command.", 
+                ephemeral=True,
+                delete_after=5
+            )
         
         # Send the message
-        await ctx.send(message)
+        await interaction.response.send_message(message, ephemeral=False)
         
-    except Exception as e:
-        # Send error message that will be deleted after 5 seconds
-        error_msg = await ctx.send(f"Error: {str(e)[:1800]}")
-        await asyncio.sleep(5)
+        # Delete the bot's message after 1 minute
+        await asyncio.sleep(60)
         try:
-            await error_msg.delete()
+            # Get the message we just sent to delete it
+            async for msg in interaction.channel.history(limit=1):
+                if msg.author == interaction.client.user and msg.content == message:
+                    await msg.delete()
+                    break
         except:
-            pass
-@slash.slash(name='trivia', description='Get a random trivia question',
-             options=[{
-                 "name": "category",
-                 "description": "Category for the trivia question",
-                 "type": 3,
-                 "required": False,
-                 "choices": [
-                     {"name": "General Knowledge", "value": "general"},
-                     {"name": "Books", "value": "books"},
-                     {"name": "Films", "value": "films"},
-                     {"name": "Music", "value": "music"},
-                     {"name": "Theatre", "value": "theatre"},
-                     {"name": "TV", "value": "tv"},
-                     {"name": "Video Games", "value": "games"},
-                     {"name": "Board Games", "value": "boardgames"},
-                     {"name": "Science", "value": "science"},
-                     {"name": "Computers", "value": "computers"},
-                     {"name": "Mathematics", "value": "math"},
-                     {"name": "Mythology", "value": "mythology"},
-                     {"name": "Sports", "value": "sports"},
-                     {"name": "Geography", "value": "geography"},
-                     {"name": "History", "value": "history"},
-                     {"name": "Politics", "value": "politics"},
-                     {"name": "Art", "value": "art"},
-                     {"name": "Celebrities", "value": "celebrities"},
-                     {"name": "Animals", "value": "animals"},
-                     {"name": "Vehicles", "value": "vehicles"},
-                     {"name": "Comics", "value": "comics"},
-                     {"name": "Gadgets", "value": "gadgets"},
-                     {"name": "Anime", "value": "anime"},
-                     {"name": "Cartoons", "value": "cartoons"}
-                 ]
-             }])
-async def trivia(ctx, category: str = None):
+            pass  # Message already deleted or no permissions
+            
+    except Exception as e:
+        error_msg = f"Error: {str(e)}"
+        try:
+            await interaction.followup.send(error_msg, ephemeral=True, delete_after=10)
+        except:
+            # If we can't send the error message, try to send it to the user's DM
+            try:
+                await interaction.user.send(f"Failed to send message in {interaction.channel.mention}: {error_msg}")
+            except:
+                pass  # Can't send DM either, just give up
+# Define category choices for the trivia command
+class TriviaCategory(enum.Enum):
+    GENERAL = "general"
+    BOOKS = "books"
+    FILMS = "films"
+    MUSIC = "music"
+    THEATRE = "theatre"
+    TV = "tv"
+    GAMES = "games"
+    BOARDGAMES = "boardgames"
+    SCIENCE = "science"
+    COMPUTERS = "computers"
+    MATH = "math"
+    MYTHOLOGY = "mythology"
+    SPORTS = "sports"
+    GEOGRAPHY = "geography"
+    HISTORY = "history"
+    POLITICS = "politics"
+    ART = "art"
+    CELEBRITIES = "celebrities"
+    ANIMALS = "animals"
+    VEHICLES = "vehicles"
+    COMICS = "comics"
+    GADGETS = "gadgets"
+    ANIME = "anime"
+    CARTOONS = "cartoons"
+
+@bot.tree.command(name='trivia', description='Get a random trivia question')
+@app_commands.describe(category="Category for the trivia question")
+async def trivia(interaction: discord.Interaction, category: TriviaCategory = None):
     """Get a random trivia question with interactive buttons!"""
     categories = {
         'general': 9, 'books': 10, 'films': 11, 'music': 12, 'theatre': 13,
@@ -654,9 +717,11 @@ async def trivia(ctx, category: str = None):
         'politics': 24, 'art': 25, 'celebrities': 26, 'animals': 27, 'vehicles': 28,
         'comics': 29, 'gadgets': 30, 'anime': 31, 'cartoons': 32
     }
+    
     # Get category ID or use general knowledge
-    category_id = categories.get(category.lower(), 9) if category and category.lower() in categories else 9
-    category_name = next((k for k, v in categories.items() if v == category_id), 'general')
+    category_str = category.value if category else 'general'
+    category_id = categories.get(category_str, 9)
+    category_name = category_str
     try:
         # Fetch a question from the Open Trivia Database
         url = f"https://opentdb.com/api.php?amount=1&category={category_id}&type=multiple"
@@ -676,8 +741,9 @@ async def trivia(ctx, category: str = None):
                         difficulty_emoji = {
                             'easy': '🟢',
                             'medium': '🟡',
-                            'hard': ''
+                            'hard': '🔴'
                         }.get(question_data['difficulty'], '')
+                        
                         # Create the view with buttons
                         class TriviaView(discord.ui.View):
                             def __init__(self, correct_answer, answers, question_text, category_name, difficulty):
@@ -697,45 +763,76 @@ async def trivia(ctx, category: str = None):
                                     )
                                     button.callback = self.button_callback
                                     self.add_item(button)
+                            
                             async def on_timeout(self):
                                 if not self.answered:
                                     for item in self.children:
                                         item.disabled = True
-                                    await self.message.edit(
-                                        content=f"⏰ Time's up! The correct answer was: **{self.correct_answer}**",
-                                        view=self
-                                    )
+                                    try:
+                                        await self.message.edit(
+                                            content=f"⏰ Time's up! The correct answer was: **{self.correct_answer}**",
+                                            view=self
+                                        )
+                                    except:
+                                        pass  # Message already deleted or other error
+                            
                             async def button_callback(self, interaction: discord.Interaction):
                                 if self.answered:
                                     return await interaction.response.send_message(
                                         "This question has already been answered!",
                                         ephemeral=True
                                     )
+                                
                                 self.answered = True
                                 selected = int(interaction.data['custom_id']) - 1
+                                
+                                # Update all buttons
+                                for i, item in enumerate(self.children):
+                                    if i == selected:
+                                        # Mark selected answer as correct/wrong
+                                        item.style = (
+                                            discord.ButtonStyle.success 
+                                            if self.answers[selected] == self.correct_answer 
+                                            else discord.ButtonStyle.danger
+                                        )
+                                    else:
+                                        # Disable other buttons
+                                        item.disabled = True
+                                    
+                                    # If this is the correct answer, highlight it
+                                    if hasattr(item, 'label') and item.label == self.correct_answer:
+                                        item.style = discord.ButtonStyle.success
+                                
+                                # Send the response
                                 if self.answers[selected] == self.correct_answer:
-                                    # Correct answer
-                                    for item in self.children:
-                                        if int(item.custom_id) == selected + 1:
-                                            item.style = discord.ButtonStyle.success
-                                            item.disabled = True
-                                    await interaction.response.edit_message(
-                                        content=f" **Correct!** The answer was: **{self.correct_answer}**",
-                                        view=self
-                                    )
+                                    response_text = f"✅ **Correct!** The answer was: **{self.correct_answer}**"
                                 else:
-                                    # Wrong answer
-                                    for item in self.children:
-                                        if int(item.custom_id) == selected + 1:
-                                            item.style = discord.ButtonStyle.danger
-                                            item.disabled = True
+                                    response_text = f"❌ **Incorrect!** The correct answer was: **{self.correct_answer}**"
+                                
+                                try:
                                     await interaction.response.edit_message(
-                                        content=f" **Incorrect!** The correct answer was: **{self.correct_answer}**",
+                                        content=f"**{self.category_name}** - {self.difficulty}\n{self.question_text}\n\n{response_text}",
                                         view=self
                                     )
-                        # Send the question with buttons
+                                except Exception as e:
+                                    print(f"Error updating trivia message: {e}")
+                        
+                        # Create and send the trivia question
                         view = TriviaView(correct_answer, answers, question, category_name, difficulty_emoji)
-                        await send_long_message(ctx, f"**{category_name}** - {difficulty_emoji}\n{question}", view=view)
+                        
+                        # Send the initial message with the question
+                        message = await interaction.response.send_message(
+                            f"**{category_name}** - {difficulty_emoji}\n{question}",
+                            view=view
+                        )
+                        
+                        # Store the message in the view for later updates
+                        if hasattr(interaction, 'response'):
+                            # For interaction-based responses
+                            view.message = await interaction.original_response()
+                        else:
+                            # Fallback for regular message-based responses
+                            view.message = message
     except Exception as e:
         print(f"Error fetching trivia question: {e}")
         await send_long_message(ctx, " An error occurred while fetching the trivia question. Please try again later.")
@@ -772,30 +869,38 @@ class RPSView(discord.ui.View):
         for item in self.children:
             item.disabled = True
         await self.message.edit(view=self)
-@bot.slash_command(name='rps', description='Play Rock-Paper-Scissors with the bot')
-async def rock_paper_scissors(ctx):
+@bot.tree.command(name='rps', description='Play Rock-Paper-Scissors with the bot')
+async def rock_paper_scissors(interaction: discord.Interaction):
     """Play Rock-Paper-Scissors with the bot"""
     view = RPSView()
-    view.message = await send_long_message(ctx, "Choose your move:", view=view)
-@bot.slash_command(name='hangman', description='Start a game of Hangman')
-async def hangman(ctx):
+    await interaction.response.send_message("Choose your move:", view=view)
+    view.message = await interaction.original_response()
+@bot.tree.command(name='hangman', description='Start a game of Hangman')
+async def hangman(interaction: discord.Interaction):
     """Start a game of Hangman"""
-    channel_id = ctx.channel.id
+    channel_id = interaction.channel.id
     if channel_id in bot.active_games and isinstance(bot.active_games[channel_id], HangmanGame):
-        await send_long_message(ctx, "There's already an active Hangman game in this channel!")
+        await interaction.response.send_message("There's already an active Hangman game in this channel!", ephemeral=True)
         return
+    
     word = random.choice(HANGMAN_WORDS)
     game = HangmanGame(word)
     bot.active_games[channel_id] = game
     view = HangmanView(game, channel_id)
-    await ctx.send(
+    
+    # Send the initial game message
+    await interaction.response.send_message(
         f" **New Hangman Game!** \n"
         f"Guess the word: {game.get_display_word()}\n"
         f"You have {game.max_attempts} attempts.\n"
         f"{game.get_hangman()}\n\n"
-        "Type a letter to guess!",
+        f"**Available Letters:**\n{view.get_letter_display()}",
         view=view
     )
+    
+    # Store the message in the view for later updates
+    view.message = await interaction.original_response()
+
 class HangmanView(discord.ui.View):
     def __init__(self, game, channel_id):
         super().__init__(timeout=300)
@@ -895,120 +1000,228 @@ class HangmanView(discord.ui.View):
             view=self
         )
         self.stop()  # Stop the view
-@bot.slash_command(name='guess_letter', description='Guess a letter in Hangman')
-async def guess_letter(ctx, letter: str):
+@bot.tree.command(name='guess', description='Guess a letter in the Hangman game')
+@app_commands.describe(letter='The letter to guess (A-Z)')
+async def guess_letter(interaction: discord.Interaction, letter: str):
     """This command is no longer used. Please use the buttons in the Hangman game interface to guess letters."""
-    await send_long_message(ctx, "Please use the buttons in the Hangman game interface to guess letters.")
+    await interaction.response.send_message(
+        "This command is no longer used. "
+        "Please use the buttons in the Hangman game interface to make your guesses.",
+        ephemeral=True
+    )
     # Try to resend the current game state if it exists
-    channel_id = ctx.channel.id
+    channel_id = interaction.channel.id
     if channel_id in bot.active_games and isinstance(bot.active_games[channel_id], HangmanGame):
         game = bot.active_games[channel_id]
-        await ctx.send(
+        await interaction.response.send_message(
             f"Current game state:\n"
             f"Word: {game.get_display_word()}\n"
             f"Incorrect guesses: {game.incorrect_guesses}/{game.max_attempts}\n"
             f"{game.get_hangman()}"
         )
-@bot.slash_command(name='quiz', description='Start a new quiz game')
-@is_allowed_channel()
-async def start_quiz(ctx):
+@bot.tree.command(name='quiz', description='Start a new quiz game')
+@app_commands.checks.has_permissions(send_messages=True)
+async def start_quiz(interaction: discord.Interaction):
     """Start a new quiz game"""
-    channel_id = ctx.channel.id
+    channel_id = interaction.channel.id
     if channel_id in bot.active_games and isinstance(bot.active_games[channel_id], QuizGame):
-        await send_long_message(ctx, "There's already an active quiz in this channel!")
+        await interaction.response.send_message(
+            "There's already an active quiz in this channel!",
+            ephemeral=True
+        )
         return
+    
     # Create a copy of the questions to avoid modifying the original list
     questions = QUIZ_QUESTIONS.copy()
     game = QuizGame(questions)
     bot.active_games[channel_id] = game
-    await ask_quiz_question(ctx, game)
-async def ask_quiz_question(ctx, game):
+    
+    # Acknowledge the interaction and start the quiz
+    await interaction.response.send_message("Starting a new quiz game! Get ready for the first question...")
+    await ask_quiz_question(interaction, game)
+async def ask_quiz_question(interaction: discord.Interaction, game):
     """Ask the current quiz question with multiple choice options"""
     question = game.get_new_question()
     if not question:
-        await send_long_message(ctx, "No more questions! Thanks for playing!")
+        await interaction.followup.send("No more questions! Thanks for playing!")
         return
+    
     # Get options and shuffle them if they exist, otherwise use just the answer
     options = question.get('options', [question['answer']])
     # If options don't include the answer, add it
     if question['answer'] not in options:
         options.append(question['answer'])
+    
     # Shuffle the options
     random.shuffle(options)
+    
     # Create the options text with letters (A, B, C, D)
     options_text = []
     for i, option in enumerate(options, 1):
         letter = chr(64 + i)  # 65 is 'A' in ASCII
         options_text.append(f"{letter}. {option}")
-    # Send the question with options
-    await ctx.send(
-        f" **Question {game.question_number} of {game.total_questions}**\n"
-        f"{question['question']}\n\n"
-        f"**Options:**\n" + "\n".join(options_text) + "\n\n"
-        "**How to answer:**\n"
-        "• Type just the letter (A, B, C, or D) **OR**\n"
-        "• Type the full text of your answer\n\n"
-        "Example: `A` or `Python` are both valid answers!"
-    )
-@bot.slash_command(name='answer', description='Answer the current quiz question')
-@is_allowed_channel()
-async def answer_question(ctx, *, user_answer: str):
-    """Answer the current quiz question"""
-    channel_id = ctx.channel.id
-    # Check if there's an active quiz or if this is a direct answer to a quiz question
-    if channel_id not in bot.active_games or not isinstance(bot.active_games[channel_id], QuizGame):
-        # If the message is just a letter (A, B, C, D) and there's an active quiz, treat it as an answer
-        if (user_answer.upper() in ['A', 'B', 'C', 'D']
-            and channel_id in bot.active_games
-            and isinstance(bot.active_games[channel_id], QuizGame)):
-            game = bot.active_games[channel_id]
-            is_correct, message = game.check_answer(user_answer)
-            await send_long_message(ctx, message)
-            # Ask next question or end game
-            if len(game.questions) > 0:
-                await asyncio.sleep(2)  # Short delay before next question
-                await ask_quiz_question(ctx, game)
-                await send_long_message(ctx, "Type your answer or the letter of your choice (A, B, C, or D)!")
+    
+    # Create a view with buttons for each option
+    class QuizView(discord.ui.View):
+        def __init__(self, game, question, options):
+            super().__init__(timeout=60)  # 60 second timeout
+            self.game = game
+            self.question = question
+            self.options = options
+            self.correct_answer = question['answer']
+            
+            # Add buttons for each option
+            for i, option in enumerate(options):
+                letter = chr(65 + i)  # A, B, C, D
+                button = discord.ui.Button(
+                    label=f"{letter}. {option}",
+                    style=discord.ButtonStyle.primary,
+                    custom_id=str(i)
+                )
+                button.callback = self.button_callback
+                self.add_item(button)
+        
+        async def button_callback(self, interaction: discord.Interaction):
+            selected = int(interaction.data['custom_id'])
+            selected_answer = self.options[selected]
+            
+            # Check if the answer is correct
+            if selected_answer == self.correct_answer:
+                self.game.score += 1
+                result = "✅ **Correct!**"
             else:
-                await send_long_message(ctx, f" Quiz complete! Your score: {game.score}/{game.total_questions}")
+                result = f"❌ **Incorrect!** The correct answer was: **{self.correct_answer}**"
+            
+            # Disable all buttons
+            for item in self.children:
+                if isinstance(item, discord.ui.Button):
+                    item.disabled = True
+                    if item.custom_id == str(selected):
+                        item.style = discord.ButtonStyle.success if selected_answer == self.correct_answer else discord.ButtonStyle.danger
+            
+            # Update the message with the result
+            await interaction.response.edit_message(
+                content=(
+                    f" **Question {self.game.question_number - 1} of {self.game.total_questions}**\n"
+                    f"{self.question['question']}\n\n"
+                    f"**Your answer:** {selected_answer}\n"
+                    f"{result}\n\n"
+                    f"**Score:** {self.game.score}/{self.game.question_number - 1}"
+                ),
+                view=self
+            )
+            
+            # Ask the next question or end the quiz
+            if self.game.question_number <= self.game.total_questions:
+                await asyncio.sleep(3)  # Short delay before next question
+                await ask_quiz_question(interaction, self.game)
+            else:
+                await interaction.followup.send(
+                    f"🎉 **Quiz Complete!** 🎉\n"
+                    f"**Final Score:** {self.game.score}/{self.game.total_questions}"
+                )
+                # Clean up
+                channel_id = interaction.channel.id
                 if channel_id in bot.active_games:
                     del bot.active_games[channel_id]
-        else:
-            await send_long_message(ctx, "No active quiz! Start one with `!quiz`")
+        
+        async def on_timeout(self):
+            # Disable all buttons when view times out
+            for item in self.children:
+                if isinstance(item, discord.ui.Button):
+                    item.disabled = True
+            try:
+                await self.message.edit(view=self)
+                await self.message.reply("⏰ Time's up! The quiz has ended due to inactivity.")
+            except:
+                pass  # Message already deleted or other error
+    
+    # Create and send the quiz question with buttons
+    view = QuizView(game, question, options)
+    
+    # Send the question with the view
+    message = await interaction.followup.send(
+        f" **Question {game.question_number} of {game.total_questions}**\n"
+        f"{question['question']}\n\n"
+        "**Select your answer:**",
+        view=view,
+        wait=True
+    )
+    
+    # Store the message in the view for later updates
+    view.message = message
+@bot.tree.command(name='answer', description='Answer the current quiz question')
+@app_commands.describe(answer='Your answer to the current quiz question')
+@app_commands.checks.has_permissions(send_messages=True)
+async def answer_question(interaction: discord.Interaction, answer: str):
+    """Answer the current quiz question"""
+    channel_id = interaction.channel.id
+    
+    # Check if there's an active quiz
+    if channel_id not in bot.active_games or not isinstance(bot.active_games[channel_id], QuizGame):
+        await interaction.response.send_message(
+            "There's no active quiz in this channel! Start one with `/quiz`",
+            ephemeral=True
+        )
         return
-    # Handle regular answer command
+    
+    # Get the current game
     game = bot.active_games[channel_id]
-    is_correct, message = game.check_answer(user_answer)
-    await ctx.send(message)
-    # Ask next question or end game
+    
+    # Check if the game is waiting for an answer
+    if not hasattr(game, 'current_question') or not game.current_question:
+        await interaction.response.send_message(
+            "There's no active question to answer! Start a new quiz with `/quiz`",
+            ephemeral=True
+        )
+        return
+    
+    # Process the answer
+    is_correct, message = game.check_answer(answer)
+    
+    # Send the result
+    await interaction.response.send_message(message, ephemeral=True)
+    
+    # If there are more questions, ask the next one
     if len(game.questions) > 0:
         await asyncio.sleep(2)  # Short delay before next question
-        await ask_quiz_question(ctx, game)
-        await ctx.send("Type your answer or the letter of your choice (A, B, C, or D)!")
+        await ask_quiz_question(interaction, game)
     else:
-        await ctx.send(f" Quiz complete! Your score: {game.score}/{game.total_questions}")
+        # Quiz is complete
+        await interaction.followup.send(
+            f"🎉 **Quiz Complete!** 🎉\n"
+            f"**Final Score:** {game.score}/{game.total_questions}"
+        )
+        # Clean up
         if channel_id in bot.active_games:
             del bot.active_games[channel_id]
-@bot.slash_command(name='stop', description='Stop the current game in this channel')
-@is_allowed_channel()
-async def stop_game(ctx):
+@bot.tree.command(name='stop', description='Stop the current game in this channel')
+@app_commands.checks.has_permissions(manage_messages=True)
+async def stop_game(interaction: discord.Interaction):
     """Stop the current game in this channel"""
-    channel_id = ctx.channel.id
+    channel_id = interaction.channel.id
     if channel_id not in bot.active_games:
-        await send_long_message(ctx, "There's no active game to stop in this channel!")
+        await interaction.response.send_message(
+            "There's no active game to stop in this channel!",
+            ephemeral=True
+        )
         return
+    
     # Get the game and clean up
     game = bot.active_games[channel_id]
     del bot.active_games[channel_id]
+    
     # Send appropriate message based on game type
     if isinstance(game, HangmanGame):
-        await send_long_message(ctx, f"⏹ Hangman game stopped. The word was: **{game.word}**")
+        message = f"⏹ Hangman game stopped. The word was: **{game.word}**"
     elif isinstance(game, QuizGame):
-        await send_long_message(ctx, f"⏹ Quiz stopped. Your final score was: {game.score}/{game.question_number-1}")
+        message = f"⏹ Quiz stopped. Your final score was: {game.score}/{game.question_number-1}"
     elif isinstance(game, TicTacToeGame):
-        await send_long_message(ctx, "⏹ Tic Tac Toe game stopped.")
+        message = "⏹ Tic Tac Toe game stopped."
     else:
-        await send_long_message(ctx, "⏹ Game stopped.")
+        message = "⏹ Game stopped."
+    
+    await interaction.response.send_message(message, ephemeral=False)
 class TicTacToeView(discord.ui.View):
     def __init__(self, game, channel_id):
         super().__init__(timeout=300)  # 5 minute timeout
@@ -1105,32 +1318,37 @@ class TicTacToeView(discord.ui.View):
             view=self
         )
         self.stop()  # Stop the view
-@bot.slash_command(name='tictactoe', description='Start a Tic Tac Toe game')
-@is_allowed_channel()
-async def tictactoe(ctx, opponent: discord.Member = None, difficulty: str = 'medium'):
-    """Start a Tic Tac Toe game
-    Examples:
-    !tictactoe @username - Play against another user
-    !tictactoe bot - Play against the AI (medium difficulty)
-    !tictactoe bot easy - Play against an easy AI
-    !tictactoe bot medium - Play against a medium AI
-    !tictactoe bot hard - Play against a hard AI
-    """
+
+@bot.tree.command(name='tictactoe', description='Start a Tic Tac Toe game')
+@app_commands.describe(
+    opponent="The user to play against (or 'bot' to play against AI)",
+    difficulty="AI difficulty level (easy, medium, hard)"
+)
+async def tictactoe(interaction: discord.Interaction, opponent: discord.Member = None, difficulty: str = 'medium'):
+    """Start a Tic Tac Toe game"""
     # Handle playing against the bot
     if opponent and (opponent.bot or str(opponent).lower() == 'bot'):
         difficulty = difficulty.lower()
         if difficulty not in ['easy', 'medium', 'hard']:
             difficulty = 'medium'
-        channel_id = ctx.channel.id
+        
+        channel_id = interaction.channel.id
+        
         # Check if there's already a game in this channel
         if channel_id in bot.active_games:
-            await send_long_message(ctx, "There's already an active game in this channel! Use `!stop` to end it first.")
+            await interaction.response.send_message(
+                "There's already an active game in this channel! Use `/stop` to end it first.",
+                ephemeral=True
+            )
             return
+            
         # Create and store the game with AI
-        game = TicTacToeGame(ctx.author, difficulty=difficulty)
+        game = TicTacToeGame(interaction.user, difficulty=difficulty)
         bot.active_games[channel_id] = game
+        
         # Create the view with buttons
         view = TicTacToeView(game, channel_id)
+        
         # Send initial game board
         board = game.get_board_display()
         message = await send_long_message(ctx,
@@ -1156,83 +1374,61 @@ async def tictactoe(ctx, opponent: discord.Member = None, difficulty: str = 'med
             "`!tictactoe bot easy` - Play against an easy AI"
         )
         return
-    if opponent == ctx.author:
-        await send_long_message(ctx, "You can't play against yourself! Try `!tictactoe bot` to play against the AI.")
+    if opponent == interaction.user:
+        await interaction.response.send_message(
+            "You can't play against yourself! Try '/tictactoe bot' to play against the AI.",
+            ephemeral=True
+        )
         return
-    channel_id = ctx.channel.id
+        
+    channel_id = interaction.channel.id
+    
     # Check if there's already a game in this channel
     if channel_id in bot.active_games:
-        await send_long_message(ctx, "There's already an active game in this channel! Use `!stop` to end it first.")
+        await interaction.response.send_message(
+            "There's already an active game in this channel! Use '/stop' to end it first.",
+            ephemeral=True
+        )
         return
+    
     # Create and store the game
-    game = TicTacToeGame(ctx.author, opponent)
+    game = TicTacToeGame(interaction.user, opponent)
     bot.active_games[channel_id] = game
+    
     # Create the view with buttons
     view = TicTacToeView(game, channel_id)
-    # Send initial game board
+    
+    # Get the initial board state
     board = game.get_board_display()
-    message = await send_long_message(ctx,
-        f" **Tic Tac Toe** \n"
-        f"{ctx.author.mention} () vs {opponent.mention} ()\n"
-        f"It's {ctx.author.mention}'s turn! ()\n\n"
+    
+    # Send the initial game message
+    await interaction.response.send_message(
+        f"**Tic Tac Toe**\n"
+        f"{interaction.user.mention} (X) vs {opponent.mention} (O)\n"
+        f"It's {interaction.user.mention}'s turn!\n\n"
         f"**How to play:**\n"
         f"Click the 'Make Move' button and enter a number (1-9).\n"
         f"Positions are numbered from left to right, top to bottom.\n\n"
         f"{board}",
         view=view
     )
-    view.message = message
-@bot.slash_command(name='listgames', description='List all available games')
-@is_allowed_channel()
-async def list_games(ctx):
-    """List all available games"""
-    embed = discord.Embed(
-        title=" Available Games",
-        description="Here are the games you can play:",
-        color=discord.Color.blue()
-    )
-    embed.add_field(
-        name=" Game Controls",
-        value=(
-            "`!tictactoe @user` - Play Tic Tac Toe with another user\n"
-            "`!hangman` - Play Hangman\n"
-            "`!quiz` - Start a quiz\n"
-            "`!answer <your answer>` - Answer the current quiz question\n"
-            "`!stop` - Stop the current game in this channel"
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name=" AI Chat",
-        value=(
-            "`!ask <question>` - Ask the AI a question\n"
-            "`!joke` - Get a joke\n"
-            "`!quote` - Get a quote\n"
-            "`!weather <location>` - Get the weather for a location\n"
-            "`!remind <reminder>` - Set a reminder"
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name=" Hangman",
-        value="`!hangman` - Start a new Hangman game with a virtual keyboard",
-        inline=False
-    )
-    embed.add_field(
-        name=" Quiz",
-        value="`!quiz` - Start a new quiz\n"
-              "`!answer <your answer>` - Answer the current quiz question",
-        inline=False
-    )
-    await send_long_message(ctx, embed=embed)
+    
+    # Store the message in the view for later updates
+    view.message = await interaction.original_response()
 
-async def get_ai_response(ctx, question):
-    """Get a response from the AI with conversation history"""
+@bot.tree.command(name='ask', description='Ask the AI a question with conversation history')
+@is_allowed_channel()
+async def ask_ai(interaction: discord.Interaction, question: str):
+    """Ask the AI a question with conversation history"""
     try:
+        await interaction.response.defer()
+        
         # Get or initialize conversation history for this channel
-        history = get_history(ctx)
+        history = get_history(interaction)
+        
         # Add user's question to history
         history.append({"role": "user", "content": question})
+        
         # Keep only the most recent messages (plus system message)
         if len(history) > MAX_HISTORY + 1:  # +1 for system message
             history = [history[0]] + history[-(MAX_HISTORY):-1] + [history[-1]]
@@ -1240,58 +1436,7 @@ async def get_ai_response(ctx, question):
         # Initialize the client with your API key
         co = cohere.ClientV2(api_key=os.getenv('COHERE_API_KEY'))
         
-        # Make the API call with conversation history
-        response = co.chat(
-            model="command-a-03-2025",
-            messages=history,
-            temperature=0.4,
-            max_tokens=500  # Limit response length
-        )
-        
-        # Extract the text from the response
         try:
-            if hasattr(response, 'message') and hasattr(response.message, 'content'):
-                if isinstance(response.message.content, list) and len(response.message.content) > 0:
-                    answer = response.message.content[0].text
-                else:
-                    answer = str(response.message.content)
-            else:
-                answer = str(response)
-        except Exception as e:
-            print(f"Error extracting response: {e}")
-            answer = "I'm having trouble understanding that. Could you rephrase your question?"
-        
-        # If answer is still None or empty, use the full response
-        if not answer:
-            answer = "I'm sorry, I couldn't generate a response. Could you try asking something else?"
-            
-        # Add AI's response to history
-        history.append({"role": "assistant", "content": answer})
-        # Update the conversation history
-        conversation_history[ctx.channel.id] = history
-        
-        return answer
-        
-    except Exception as e:
-        error_msg = f"Error in get_ai_response: {str(e)}"
-        print(error_msg)
-        return "I'm having trouble processing your request right now. Please try again later."
-        
-@bot.slash_command(name='ask', description='Ask the AI a question with conversation history')
-@is_allowed_channel()
-async def ask_ai(ctx, *, question):
-    """Ask the AI a question with conversation history"""
-    try:
-        async with ctx.typing():
-            # Get or initialize conversation history for this channel
-            history = get_history(ctx)
-            # Add user's question to history
-            history.append({"role": "user", "content": question})
-            # Keep only the most recent messages (plus system message)
-            if len(history) > MAX_HISTORY + 1:  # +1 for system message
-                history = [history[0]] + history[-(MAX_HISTORY):-1] + [history[-1]]
-            # Initialize the client with your API key
-            co = cohere.ClientV2(api_key=os.getenv('COHERE_API_KEY'))
             # Make the API call with conversation history
             response = co.chat(
                 model="command-a-03-2025",
@@ -1299,10 +1444,9 @@ async def ask_ai(ctx, *, question):
                 temperature=0.4,
                 max_tokens=500  # Limit response length
             )
+            
             # Extract the text from the response
             try:
-                # Access the text content from the response
-                # The response structure is different in the Cohere API
                 if hasattr(response, 'message') and hasattr(response.message, 'content'):
                     if isinstance(response.message.content, list) and len(response.message.content) > 0:
                         answer = response.message.content[0].text
@@ -1313,33 +1457,49 @@ async def ask_ai(ctx, *, question):
             except Exception as e:
                 print(f"Error extracting response: {e}")
                 answer = str(response)  # Fallback to string representation
+            
             # If answer is still None or empty, use the full response
             if not answer:
-                answer = str(response)
+                answer = "I'm sorry, I couldn't generate a response. Could you try asking something else?"
+            
             # Add AI's response to history
             history.append({"role": "assistant", "content": answer})
+            
             # Update the conversation history
-            conversation_history[ctx.channel.id] = history
+            conversation_history[interaction.channel.id] = history
+            
             # Split the answer into chunks of 2000 characters (Discord's message limit)
             chunk_size = 1900  # Slightly less to account for the emoji and continuation markers
             chunks = [answer[i:i+chunk_size] for i in range(0, len(answer), chunk_size)]
-            # Send each chunk as a separate message
-            for i, chunk in enumerate(chunks):
+            
+            # Send the first chunk as a followup to the interaction
+            if chunks:
+                await interaction.followup.send(chunks[0])
+            
+            # Send remaining chunks as separate messages
+            for chunk in chunks[1:]:
                 try:
-                    # Add a header to subsequent chunks
-                    if i > 0:
-                        chunk = f"(Continued from previous message)\n\n{chunk}"
-                    await send_long_message(ctx, chunk)
+                    await interaction.channel.send(f"(Continued from previous message)\n\n{chunk}")
                 except Exception as e:
-                    print(f"Error sending message chunk {i+1}: {e}")
+                    print(f"Error sending message chunk: {e}")
                     continue
+                    
+        except Exception as e:
+            error_msg = f"Error in Cohere API call: {str(e)}"
+            print(f"Ask AI Error: {error_msg}")
+            await interaction.followup.send("I'm having trouble connecting to the AI service. Please try again later.")
+            
     except Exception as e:
-        error_msg = f"Error: {str(e)}"
+        error_msg = f"Unexpected error: {str(e)}"
         print(f"Ask AI Error: {error_msg}")
-        await ctx.send("I'm having trouble thinking right now. Could you try again?")
-        if 'response' in locals():
-            print(f"Response type: {type(response)}")
-            print(f"Response content: {response}")
+        try:
+            await interaction.followup.send("I'm having trouble thinking right now. Could you try again?")
+        except:
+            # If we can't send a followup, try sending a regular message
+            try:
+                await interaction.channel.send("I'm having trouble thinking right now. Could you try again?")
+            except Exception as e:
+                print(f"Failed to send error message: {e}")
 @bot.event
 async def on_message(message):
     # Don't respond to ourselves
@@ -1531,6 +1691,27 @@ from discord.ext import commands
 import re
 import unicodedata
 
+def is_suspicious(text):
+    """Check if text contains suspicious patterns"""
+    # Check for excessive special characters
+    special_chars = len(re.findall(r'[^\w\s]', text))
+    if special_chars > len(text) * 0.3:  # More than 30% special chars
+        return True
+        
+    # Check for suspicious patterns
+    suspicious_patterns = [
+        r'\d{10,}',  # Long numbers
+        r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+',  # URLs
+        r'[\w\.-]+@[\w\.-]+\.\w+',  # Email addresses
+        r'[\s\S]*(.)\1{5,}[\s\S]*',  # Repeated characters (6+ times)
+    ]
+    
+    for pattern in suspicious_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+            
+    return False
+
 def normalize_text(text):
     # Convert to lowercase
     text = text.lower()
@@ -1583,17 +1764,36 @@ def contains_banned_word(text, banned_words):
                     return banned
                     
     return None
-@bot.slash_command(name='report', description='Report a false positive in content filtering')
-async def report_false_positive(ctx, *, reason: str):
+@bot.tree.command(name='report', description='Report a false positive in content filtering')
+@app_commands.describe(reason='The reason for reporting this as a false positive')
+@app_commands.checks.cooldown(1, 300)  # 1 report per 5 minutes per user
+async def report_false_positive(interaction: discord.Interaction, reason: str):
     """Report a false positive in the content filter"""
     channel = bot.get_channel(MODERATION_CHANNEL_ID)
     if channel:
+        # Get the referenced message if any
+        ref_message = None
+        if interaction.message.reference and isinstance(interaction.message.reference.resolved, discord.Message):
+            ref_message = interaction.message.reference.resolved.content
+        
+        # Send the report to the moderation channel
         await channel.send(
-            f"⚠️ False positive report from {ctx.author}:\n"
-            f"Message: {ctx.message.reference.resolved.content if ctx.message.reference else 'No message referenced'}\n"
-            f"Reason: {reason}"
+            f"⚠️ False positive report from {interaction.user.mention}:\n"
+            f"Message: {ref_message or 'No message referenced'}\n"
+            f"Reason: {reason}\n"
+            f"Channel: {interaction.channel.mention} ({interaction.channel_id})"
         )
-        await ctx.send("✅ Your report has been submitted. Thank you for your feedback!")
+        
+        # Send a confirmation to the user
+        await interaction.response.send_message(
+            "✅ Your report has been submitted. Thank you for your feedback!",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            "❌ Could not find the moderation channel. Please contact an administrator.",
+            ephemeral=True
+        )
 
 @bot.command(name='suggestban') 
 async def suggest_ban_word(ctx, *, word: str):
@@ -1616,63 +1816,102 @@ GENERATION_COUNTER = defaultdict(list)
 RATE_LIMIT = 2  # 2 generations
 RATE_LIMIT_WINDOW = 60  # per 60 seconds
 
-@bot.slash_command(name='generate', description='Generate an image from text')
-@commands.cooldown(2, 10, commands.BucketType.user)
-async def fast_generate(ctx, *, prompt: str):
+@bot.tree.command(name='generate', description='Generate an image from text')
+@app_commands.describe(prompt='The text prompt to generate an image from')
+@app_commands.checks.cooldown(2, 10, key=lambda i: (i.guild_id, i.user.id))
+async def fast_generate(interaction: discord.Interaction, prompt: str):
     """Generate images faster using flux-schnell model (2 per minute limit)"""
-    # Check rate limit first
-    user_id = ctx.author.id
-    now = datetime.now(UTC)
+    # Defer the response since this might take a while
+    await interaction.response.defer(thinking=True)
+    
+    # Check rate limit
+    current_time = time.time()
+    user_id = str(interaction.user.id)
     
     # Clean up old timestamps
-    GENERATION_COUNTER[user_id] = [t for t in GENERATION_COUNTER.get(user_id, []) 
-                                 if now - t < timedelta(seconds=RATE_LIMIT_WINDOW)]
+    user_timestamps = [t for t in GENERATION_COUNTER.get(user_id, []) if current_time - t < RATE_LIMIT_WINDOW]
     
-    # Check if user has exceeded the limit
-    if len(GENERATION_COUNTER[user_id]) >= RATE_LIMIT:
-        time_left = (GENERATION_COUNTER[user_id][0] + timedelta(seconds=RATE_LIMIT_WINDOW) - now).seconds
-        return await ctx.send(f"❌ Rate limit exceeded. Please wait {time_left} seconds before generating again.")
+    if len(user_timestamps) >= RATE_LIMIT:
+        remaining_time = int(RATE_LIMIT_WINDOW - (current_time - user_timestamps[0]))
+        await interaction.followup.send(
+            f"You've reached the rate limit of {RATE_LIMIT} generations per {RATE_LIMIT_WINDOW} seconds. "
+            f"Please wait {remaining_time} seconds and try again.",
+            ephemeral=True
+        )
+        return
     
     # Add current timestamp
-    GENERATION_COUNTER[user_id].append(now)
-    
-    # Rest of your existing generate command
-    if ctx.author.id not in ALLOWED_USERS:
-        return await ctx.send("❌ You don't have permission to use this command.")
-    
-    # Check for suspicious patterns
-    if is_suspicious(prompt):
-        await log_suspicious_activity(ctx, prompt, "Suspicious pattern detected")
-        return await ctx.send("❌ Your request appears to contain suspicious patterns and was flagged for review.")
-    
-    # Check for banned words
-    bad_word = contains_banned_word(prompt, BANNED_WORDS)
-    if bad_word:
-        await log_suspicious_activity(ctx, prompt, f"Banned word detected: {bad_word}")
-        return await ctx.send("❌ Sorry, that prompt contains content that's not allowed.")
-    
-    msg = await ctx.send("⚡ **Generating your image...**")
+    if user_id not in GENERATION_COUNTER:
+        GENERATION_COUNTER[user_id] = []
+    GENERATION_COUNTER[user_id].append(current_time)
     
     try:
-        seed = random.randint(0, 99999)
-        url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?seed={seed}&model=flux-schnell&width=512&height=512&turbo=true"
+        # Call the image generation API
+        response = requests.post(
+            'https://api.flux.dev/ai/generate',
+            json={
+                'prompt': prompt,
+                'model': 'flux-schnell',
+                'width': 512,
+                'height': 512,
+                'num_images': 1,
+                'guidance_scale': 7.5,
+                'steps': 20
+            },
+            headers={'Authorization': f'Bearer {FLUX_API_KEY}'},
+            timeout=60  # 60 seconds timeout
+        )
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    image_data = io.BytesIO(data)
-                    file = discord.File(fp=image_data, filename="generated.png")
-                    await ctx.send(content=f"🎨 **Generated:** {prompt}", file=file)
-                    await msg.delete()
-                else:
-                    await msg.edit(content="❌ Failed to generate image. Please try again later.")
+        if response.status_code != 200:
+            await interaction.followup.send(
+                f"❌ Error generating image: {response.text}",
+                ephemeral=True
+            )
+            return
+        
+        # Get the image URL from the response
+        image_url = response.json().get('data', [{}])[0].get('url')
+        if not image_url:
+            await interaction.followup.send(
+                "❌ Failed to generate image: No URL returned",
+                ephemeral=True
+            )
+            return
+        
+        # Download the image
+        image_response = requests.get(image_url, timeout=30)
+        if image_response.status_code != 200:
+            await interaction.followup.send(
+                "❌ Failed to download the generated image",
+                ephemeral=True
+            )
+            return
+        
+        # Send the image
+        with io.BytesIO(image_response.content) as f:
+            file = discord.File(f, filename=f'generated_{interaction.id}.png')
+            await interaction.followup.send(
+                f"🎨 **Generated Image**\n"
+                f"**Prompt:** {discord.utils.escape_markdown(prompt)}"
+                f"\n**Requested by:** {interaction.user.mention}",
+                file=file,
+                wait=True
+            )
+            
+    except requests.Timeout:
+        await interaction.followup.send(
+            "⏱️ The image generation request timed out. Please try again later.",
+            ephemeral=True
+        )
     except Exception as e:
-        await msg.edit(content=f"❌ Error: {e}")
+        await interaction.followup.send(
+            f"❌ An error occurred: {str(e)}",
+            ephemeral=True
+        )
     finally:
         # Clean up old timestamps
         GENERATION_COUNTER[user_id] = [t for t in GENERATION_COUNTER.get(user_id, []) 
-                                     if now - t < timedelta(seconds=RATE_LIMIT_WINDOW)]
+                                     if current_time - t < RATE_LIMIT_WINDOW]
     
 # Create the FastAPI app
 app = FastAPI()
@@ -1699,35 +1938,75 @@ def run_web():
             print(f"[WEB] Error starting server on port {port}: {e}")
             break
 
-@bot.slash_command(name='say', description='Make the bot say something in the current channel')
-@commands.has_permissions(manage_messages=True)
-async def say_message(ctx, *, message: str):
+@bot.tree.command(name='say', description='Make the bot say something in the current channel')
+@app_commands.describe(message='The message to send')
+@app_commands.checks.has_permissions(manage_messages=True)
+async def say_message(interaction: discord.Interaction, message: str):
     """Make the bot say something in the current channel"""
     try:
-        # Delete the command message first
+        # Acknowledge the interaction first
+        await interaction.response.send_message("Message sent!", ephemeral=True, delete_after=3)
+        
+        # Delete the command message if possible
         try:
-            await ctx.message.delete()
+            if interaction.message:
+                await interaction.message.delete()
         except:
             pass  # If deletion fails, continue anyway
-        # Then send the message
-        await ctx.send(message)
+            
+        # Send the message to the channel
+        await interaction.channel.send(message)
+        
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ I don't have permission to send messages in this channel.",
+            ephemeral=True
+        )
     except Exception as e:
-        await ctx.send(f"Failed to send message: {e}", delete_after=10)
+        await interaction.followup.send(
+            f"❌ Failed to send message: {e}",
+            ephemeral=True
+        )
 
-@bot.slash_command(name='sayin', description='Make the bot say something in a specific channel')
-@commands.has_permissions(manage_messages=True)
-async def say_in_channel(ctx, channel: discord.TextChannel, *, message: str):
+@bot.tree.command(name='sayin', description='Make the bot say something in a specific channel')
+@app_commands.describe(
+    channel='The channel to send the message to',
+    message='The message to send'
+)
+@app_commands.checks.has_permissions(manage_messages=True)
+async def say_in_channel(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
     """Make the bot say something in a specific channel"""
     try:
-        # Delete the command message first
+        # Check if the bot has permission to send messages in the target channel
+        if not channel.permissions_for(interaction.guild.me).send_messages:
+            await interaction.response.send_message(
+                f"❌ I don't have permission to send messages in {channel.mention}.",
+                ephemeral=True
+            )
+            return
+            
+        # Acknowledge the interaction first
+        await interaction.response.send_message(
+            f"Message sent to {channel.mention}!",
+            ephemeral=True,
+            delete_after=5
+        )
+        
+        # Delete the command message if possible
         try:
-            await ctx.message.delete()
+            if interaction.message:
+                await interaction.message.delete()
         except:
             pass  # If deletion fails, continue anyway
-        # Then send the message
+            
+        # Send the message to the specified channel
         await channel.send(message)
+        
     except Exception as e:
-        await ctx.send(f"Failed to send message: {e}", delete_after=10)
+        await interaction.followup.send(
+            f"❌ Failed to send message: {e}",
+            ephemeral=True
+        )
 
 @bot.command(name='schedule')
 @commands.has_permissions(manage_messages=True)
