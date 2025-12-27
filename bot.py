@@ -329,11 +329,62 @@ async def on_ready():
     except Exception as e:
         print(f'[BOT] Error syncing commands: {e}')
 
+# Command handlers for prefix commands (!)
+prefix_commands = {}
+
+def prefix_command(name: str, description: str = ""):
+    """Decorator to register prefix commands"""
+    def decorator(func):
+        prefix_commands[name.lower()] = {
+            'function': func,
+            'description': description or func.__doc__ or "No description"
+        }
+        return func
+    return decorator
+
 # Simple ping command to test slash commands
 @bot.tree.command(name="ping", description="Check if the bot is responding")
 async def ping(interaction: discord.Interaction):
     """Simple ping command to test if the bot is responding"""
     await interaction.response.send_message("Pong! 🏓", ephemeral=True)
+
+# Prefix command handler for !ping
+@prefix_command(name="ping", description="Check if the bot is responding")
+async def ping_prefix(ctx):
+    """Simple ping command for prefix commands"""
+    await ctx.send("Pong! 🏓")
+
+# Message event handler for prefix commands
+@bot.event
+async def on_message(message):
+    # Don't respond to ourselves or other bots
+    if message.author == bot.user or message.author.bot:
+        return
+
+    # Process commands with ! prefix
+    if message.content.startswith('!'):
+        # Split the message into command and arguments
+        parts = message.content[1:].split()
+        if not parts:
+            return
+
+        command_name = parts[0].lower()
+        args = parts[1:] if len(parts) > 1 else []
+
+        # Find and execute the command
+        if command_name in prefix_commands:
+            handler = prefix_commands[command_name]
+            try:
+                # Call the command function with the message as context
+                ctx = await bot.get_context(message)
+                await handler['function'](ctx)
+                return  # Prevent processing commands twice
+            except Exception as e:
+                print(f"Error executing command {command_name}: {e}")
+                await message.channel.send(f"❌ Error executing command: {e}")
+    
+    # Process other message events and commands
+    await bot.process_commands(message)
 
 # Manual sync command for bot owner
 @bot.tree.command(name='sync', description='Sync slash commands (Bot Owner Only)')
@@ -468,6 +519,11 @@ async def hello(interaction: discord.Interaction):
     """Greet the bot"""
     await interaction.response.send_message(random.choice(RESPONSES['hello']))
 
+@prefix_command(name='hello', description='Greet the bot')
+async def hello_prefix(ctx):
+    """Greet the bot (prefix command)"""
+    await ctx.send(random.choice(RESPONSES['hello']))
+
 @bot.tree.command(name='joke', description='Tell a random joke')
 async def tell_joke(interaction: discord.Interaction):
     """Tell a random joke"""
@@ -479,22 +535,45 @@ async def tell_joke(interaction: discord.Interaction):
                     joke_data = await response.json()
                     if 'joke' in joke_data:
                         await interaction.response.send_message(joke_data['joke'])
+                        return
                     elif 'setup' in joke_data and 'delivery' in joke_data:
                         await interaction.response.send_message(f"{joke_data['setup']}\n\n{joke_data['delivery']}")
-                    else:
-                        # Fallback to local jokes if API response is unexpected
-                        await interaction.response.send_message(random.choice(JOKES))
-                else:
-                    # Fallback to local jokes if API is down
-                    await interaction.response.send_message(random.choice(JOKES))
+                        return
     except Exception as e:
-        # Fallback to local jokes if there's an error
         print(f"Error fetching joke: {e}")
-        await interaction.response.send_message(random.choice(JOKES))
+    
+    # Fallback to local jokes if there's an error
+    await interaction.response.send_message(random.choice(JOKES))
+
+@prefix_command(name='joke', description='Tell a random joke')
+async def joke_prefix(ctx):
+    """Tell a random joke (prefix command)"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Try to get a joke from the API first
+            async with session.get('https://v2.jokeapi.dev/joke/Any?type=single') as response:
+                if response.status == 200:
+                    joke_data = await response.json()
+                    if 'joke' in joke_data:
+                        await ctx.send(joke_data['joke'])
+                        return
+                    elif 'setup' in joke_data and 'delivery' in joke_data:
+                        await ctx.send(f"{joke_data['setup']}\n\n{joke_data['delivery']}")
+                        return
+    except Exception as e:
+        print(f"Error fetching joke: {e}")
+    
+    # Fallback to local jokes if there's an error
+    await ctx.send(random.choice(JOKES))
 @bot.tree.command(name='quote', description='Get a random inspirational quote')
 async def get_quote(interaction: discord.Interaction):
     """Get a random inspirational quote"""
     await interaction.response.send_message(random.choice(RESPONSES['quote']))
+
+@prefix_command(name='quote', description='Get a random inspirational quote')
+async def quote_prefix(ctx):
+    """Get a random inspirational quote (prefix command)"""
+    await ctx.send(random.choice(RESPONSES['quote']))
 
 @bot.tree.command(name='fact', description='Get a random interesting fact')
 async def get_fact(interaction: discord.Interaction):
@@ -519,11 +598,41 @@ async def get_fact(interaction: discord.Interaction):
         "Some cats are actually allergic to humans."
     ]
     await interaction.response.send_message(random.choice(facts))
+
+@prefix_command(name='fact', description='Get a random interesting fact')
+async def fact_prefix(ctx):
+    """Get a random interesting fact (prefix command)"""
+    facts = [
+        "Honey never spoils. Archaeologists have found pots of honey in ancient Egyptian tombs that are over 3,000 years old and still perfectly edible!",
+        "A single cloud can weigh more than a million pounds.",
+        "There are more stars in the universe than grains of sand on all the Earth's beaches.",
+        "Octopuses have three hearts and blue blood.",
+        "A group of flamingos is called a 'flamboyance'.",
+        "Bananas are berries, but strawberries aren't.",
+        "The human brain uses about 20% of the body's total energy.",
+        "There are more possible games of chess than atoms in the observable universe.",
+        "A day on Venus is longer than a year on Venus.",
+        "Cows have best friends and get stressed when they're separated.",
+        "The Great Wall of China is not visible from space without aid.",
+        "A bolt of lightning contains enough energy to toast 100,000 slices of bread.",
+        "There are more fake flamingos in the world than real ones.",
+        "The shortest war in history was between Britain and Zanzibar in 1896. Zanzibar surrendered after 38 minutes.",
+        "A human's little finger contributes over 50% of the hand's strength.",
+        "The inventor of the frisbee was turned into a frisbee after he died.",
+        "Some cats are actually allergic to humans."
+    ]
+    await ctx.send(random.choice(facts))
 @bot.tree.command(name='time', description='Get the current time')
 async def get_time(interaction: discord.Interaction):
     """Get the current time"""
     now = datetime.datetime.now()
     await interaction.response.send_message(f"⏰ The current time is: {now.strftime('%I:%M %p')}")
+
+@prefix_command(name='time', description='Get the current time')
+async def time_prefix(ctx):
+    """Get the current time (prefix command)"""
+    now = datetime.datetime.now()
+    await ctx.send(f"⏰ The current time is: {now.strftime('%I:%M %p')}")
 
 @bot.tree.command(name='remindme', description='Set a reminder')
 @app_commands.describe(
@@ -537,6 +646,11 @@ async def set_reminder(interaction: discord.Interaction, time: str, message: str
 async def encourage(interaction: discord.Interaction):
     """Get encouragement when you're feeling down"""
     await interaction.response.send_message(random.choice(RESPONSES['encourage']))
+
+@prefix_command(name='encourage', description='Get encouragement when you\'re feeling down')
+async def encourage_prefix(ctx):
+    """Get encouragement when you're feeling down (prefix command)"""
+    await ctx.send(random.choice(RESPONSES['encourage']))
 
 @bot.tree.command(name='afk', description='Set yourself as AFK with an optional reason')
 @app_commands.describe(reason="Reason for being AFK")
@@ -1867,102 +1981,58 @@ GENERATION_COUNTER = defaultdict(list)
 RATE_LIMIT = 2  # 2 generations
 RATE_LIMIT_WINDOW = 60  # per 60 seconds
 
-@bot.tree.command(name='generate', description='Generate an image from text')
-@app_commands.describe(prompt='The text prompt to generate an image from')
-@app_commands.checks.cooldown(2, 10, key=lambda i: (i.guild_id, i.user.id))
-async def fast_generate(interaction: discord.Interaction, prompt: str):
-    """Generate images faster using flux-schnell model (2 per minute limit)"""
-    # Defer the response since this might take a while
-    await interaction.response.defer(thinking=True)
-    
-    # Check rate limit
-    current_time = time.time()
-    user_id = str(interaction.user.id)
-    
-    # Clean up old timestamps
-    user_timestamps = [t for t in GENERATION_COUNTER.get(user_id, []) if current_time - t < RATE_LIMIT_WINDOW]
-    
-    if len(user_timestamps) >= RATE_LIMIT:
-        remaining_time = int(RATE_LIMIT_WINDOW - (current_time - user_timestamps[0]))
-        await interaction.followup.send(
-            f"You've reached the rate limit of {RATE_LIMIT} generations per {RATE_LIMIT_WINDOW} seconds. "
-            f"Please wait {remaining_time} seconds and try again.",
-            ephemeral=True
-        )
-        return
-    
-    # Add current timestamp
-    if user_id not in GENERATION_COUNTER:
-        GENERATION_COUNTER[user_id] = []
-    GENERATION_COUNTER[user_id].append(current_time)
-    
+import discord
+from discord.ext import commands
+import aiohttp
+import urllib.parse
+import io
+
+# --- Add this command to your bot ---
+
+import discord
+from discord.ext import commands
+import aiohttp
+import urllib.parse
+import io
+
+@bot.command(name='generate', aliases=['photo', 'pic', 'imagine'])
+async def generate_photo(ctx, *, prompt: str):
+    """Generates an image using Pollinations AI. Usage: !generate <prompt>"""
     try:
-        # Call the image generation API
-        response = requests.post(
-            'https://api.flux.dev/ai/generate',
-            json={
-                'prompt': prompt,
-                'model': 'flux-schnell',
-                'width': 512,
-                'height': 512,
-                'num_images': 1,
-                'guidance_scale': 7.5,
-                'steps': 20
-            },
-            headers={'Authorization': f'Bearer {FLUX_API_KEY}'},
-            timeout=60  # 60 seconds timeout
-        )
-        
-        if response.status_code != 200:
-            await interaction.followup.send(
-                f"❌ Error generating image: {response.text}",
-                ephemeral=True
-            )
-            return
-        
-        # Get the image URL from the response
-        image_url = response.json().get('data', [{}])[0].get('url')
-        if not image_url:
-            await interaction.followup.send(
-                "❌ Failed to generate image: No URL returned",
-                ephemeral=True
-            )
-            return
-        
-        # Download the image
-        image_response = requests.get(image_url, timeout=30)
-        if image_response.status_code != 200:
-            await interaction.followup.send(
-                "❌ Failed to download the generated image",
-                ephemeral=True
-            )
-            return
-        
-        # Send the image
-        with io.BytesIO(image_response.content) as f:
-            file = discord.File(f, filename=f'generated_{interaction.id}.png')
-            await interaction.followup.send(
-                f"🎨 **Generated Image**\n"
-                f"**Prompt:** {discord.utils.escape_markdown(prompt)}"
-                f"\n**Requested by:** {interaction.user.mention}",
-                file=file,
-                wait=True
-            )
+        # 1. Show the bot is "typing" while the image is being created
+        async with ctx.typing():
             
-    except requests.Timeout:
-        await interaction.followup.send(
-            "⏱️ The image generation request timed out. Please try again later.",
-            ephemeral=True
-        )
+            # 2. Encode the prompt for the URL
+            encoded_prompt = urllib.parse.quote(prompt)
+            
+            # Use 'turbo' for the fastest generation speed
+            # Use 'flux' for the highest quality (slightly slower)
+            model = "turbo" 
+            url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model={model}&width=1024&height=1024&nologo=true"
+
+            # 3. Download the image from Pollinations
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        image_data = await response.read()
+                        
+                        # 4. Turn the raw data into a Discord file
+                        file_buffer = io.BytesIO(image_data)
+                        file_buffer.seek(0)
+                        file = discord.File(fp=file_buffer, filename='pollination_image.png')
+                        
+                        # 5. Send the photo to the channel
+                        embed = discord.Embed(title=f"🎨 Generated: {prompt[:100]}")
+                        embed.set_image(url="attachment://pollination_image.png")
+                        embed.set_footer(text=f"Model: {model} | Pollinations.ai")
+                        
+                        await ctx.send(embed=embed, file=file)
+                    else:
+                        await ctx.send(f"❌ Error: Could not generate image (Status {response.status})")
+
     except Exception as e:
-        await interaction.followup.send(
-            f"❌ An error occurred: {str(e)}",
-            ephemeral=True
-        )
-    finally:
-        # Clean up old timestamps
-        GENERATION_COUNTER[user_id] = [t for t in GENERATION_COUNTER.get(user_id, []) 
-                                     if current_time - t < RATE_LIMIT_WINDOW]
+        print(f"Error in photo command: {e}")
+        await ctx.send("⚠️ I ran into an error trying to make that photo.")
     
 # Create the FastAPI app
 app = FastAPI()
@@ -2169,7 +2239,7 @@ async def sync_commands():
         print(f'[BOT] Error syncing commands: {e}')
         return False
 
-if __name__ == "__main__":
+async def main():
     # 1. Start web server in background thread
     import threading
     threading.Thread(target=run_web, daemon=True).start()
@@ -2180,16 +2250,52 @@ if __name__ == "__main__":
         print("❌ Error: DISCORD_BOT_TOKEN environment variable not set")
         exit(1)
     
-    # 3. Run the bot with the token
+    # 3. Start the bot
     print("[BOT] Starting bot...")
     try:
-        # Run the sync command before starting the bot
-        import asyncio
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(sync_commands())
-        
         # Start the bot
-        bot.run(token)
+        async with bot:
+            print("[BOT] Bot is starting...")
+            await bot.start(token)
     except Exception as e:
         print(f"❌ Error starting bot: {e}")
+        import traceback
+        traceback.print_exc()
         exit(1)
+
+# Add an event to sync commands when the bot is ready
+@bot.event
+async def on_ready():
+    print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})")
+    print("------")
+    
+    try:
+        # Always sync global commands
+        synced = await bot.tree.sync()
+        print(f'[BOT] Synced {len(synced)} global commands')
+        
+        # Try to sync guild commands if in the specified guild
+        guild_id = 1440330105799839856  # Your guild ID
+        guild = bot.get_guild(guild_id)
+        
+        if guild:
+            try:
+                bot.tree.copy_global_to(guild=discord.Object(id=guild_id))
+                synced_guild = await bot.tree.sync(guild=discord.Object(id=guild_id))
+                print(f'[BOT] Synced {len(synced_guild)} guild commands for {guild.name}')
+            except Exception as e:
+                print(f'[BOT] Warning: Could not sync guild commands: {e}')
+        else:
+            print(f'[BOT] Not in guild with ID {guild_id}, skipping guild command sync')
+            
+        print("[BOT] Bot is ready!")
+        
+    except Exception as e:
+        print(f'[BOT] Error syncing commands: {e}')
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+
