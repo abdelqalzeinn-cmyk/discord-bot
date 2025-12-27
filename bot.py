@@ -288,12 +288,19 @@ class MyBot(commands.Bot):
     async def setup_hook(self) -> None:
         # Sync commands on startup
         if not self.synced:
-            # Copy global commands to current guild for faster testing
-            guild = discord.Object(id=1440330105799839856)  # Replace with your guild ID
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            self.synced = True
-            print(f"Synced slash commands for {guild.id}")
+            try:
+                # Sync global commands
+                await self.tree.sync()
+                
+                # Also sync for the specific guild for faster updates during development
+                guild = discord.Object(id=1440330105799839856)  # Replace with your guild ID
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                
+                self.synced = True
+                print(f"✅ Synced slash commands globally and for guild {guild.id}")
+            except Exception as e:
+                print(f"❌ Error syncing commands: {e}")
 
 # Initialize the bot
 bot = MyBot()
@@ -303,13 +310,57 @@ bot = MyBot()
 async def on_ready():
     print(f'[BOT] Logged in as {bot.user} (ID: {bot.user.id})')
     print('------')
+    
+    # Set the bot's presence
     await bot.change_presence(activity=discord.Game(name="/help for commands"))
+    
+    # Try to sync commands on ready
+    try:
+        # Sync global commands
+        synced = await bot.tree.sync()
+        
+        # Also sync for the specific guild for faster updates during development
+        guild = discord.Object(id=1440330105799839856)  # Replace with your guild ID
+        bot.tree.copy_global_to(guild=guild)
+        synced_guild = await bot.tree.sync(guild=guild)
+        
+        print(f'[BOT] Synced {len(synced)} global commands')
+        print(f'[BOT] Synced {len(synced_guild)} guild commands')
+    except Exception as e:
+        print(f'[BOT] Error syncing commands: {e}')
 
 # Simple ping command to test slash commands
 @bot.tree.command(name="ping", description="Check if the bot is responding")
 async def ping(interaction: discord.Interaction):
     """Simple ping command to test if the bot is responding"""
     await interaction.response.send_message("Pong! 🏓", ephemeral=True)
+
+# Manual sync command for bot owner
+@bot.tree.command(name='sync', description='Sync slash commands (Bot Owner Only)')
+@commands.is_owner()
+async def sync_commands(interaction: discord.Interaction):
+    """Manually sync slash commands"""
+    try:
+        # Sync global commands
+        await interaction.response.defer(ephemeral=True)
+        await bot.tree.sync()
+        
+        # Also sync for the specific guild
+        guild = discord.Object(id=1440330105799839856)  # Replace with your guild ID
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
+        
+        await interaction.followup.send(
+            "✅ Successfully synced slash commands!\n"
+            "It may take a few minutes for the commands to appear. "
+            "If they don't show up, try restarting Discord with Ctrl+R",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Failed to sync commands: {e}",
+            ephemeral=True
+        )
 
 # Initialize bot attributes
 bot.trivia_questions = {}  # Initialize trivia_questions dictionary
