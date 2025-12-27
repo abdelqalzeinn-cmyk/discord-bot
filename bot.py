@@ -62,6 +62,7 @@ BANNED_WORDS = [
     "nsfw", "naked", "porn", "sex", "gore", "blood", "violence",
     "r34", "hentai", "undress", "bikini", "lingerie",
     "penis", "dick", "boobs", "vagina", "pussy", "ass", "nude", "token",
+    "testicales"
 ]
 # -----------------------------------
 def is_allowed_channel():
@@ -1382,41 +1383,35 @@ import discord
 from discord.ext import commands
 
 @bot.command(name='generate')
-@commands.cooldown(1, 10, commands.BucketType.user) # Stops spam (1 use per 10s)
-async def generate_image(ctx, *, prompt: str):
-    """Generate an image for free without any API keys or credit cards"""
+@commands.cooldown(2, 10, commands.BucketType.user)
+async def fast_generate(ctx, *, prompt: str):
+    """Generate images faster using flux-schnell model"""
+    # Check for restricted words first
+    bad_word = next((word for word in BANNED_WORDS if word in prompt.lower()), None)
+    if bad_word:
+        return await ctx.send(f"❌ Sorry, the word '{bad_word}' is not allowed in prompts.")
     
-    # 1. Simple Permission & Word Checks
     if ctx.author.id not in ALLOWED_USERS:
-        return await ctx.send("❌ You don't have permission.")
-    if any(word in prompt.lower() for word in BANNED_WORDS):
-        return await ctx.send("❌ Prompt contains restricted words.")
-
-    msg = await ctx.send("🎨 **Pollinations AI** is crafting your image... please wait.")
-
-    try:
-        # 2. Format the URL (Pollinations doesn't need a key!)
-        # We add a random seed so the same prompt can generate different images
-        import random
-        seed = random.randint(0, 99999)
-        encoded_prompt = prompt.replace(" ", "%20")
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}&turbo=true&width=512&height=512"
-
-        # 3. Download the image
-        response = requests.get(image_url, timeout=30)
+        return await ctx.send("❌ You don't have permission to use this command.")
         
-        if response.status_code == 200:
-            # 4. Turn the raw data into a Discord-friendly file
-            image_data = io.BytesIO(response.content)
-            discord_file = discord.File(fp=image_data, filename="ai_generated.png")
-            
-            await ctx.send(content=f"✅ **Generated:** {prompt}", file=discord_file)
-            await msg.delete()
-        else:
-            await msg.edit(content="❌ Pollinations is busy. Try again in a moment.")
-
+    msg = await ctx.send("⚡ **Generating your image...**")
+    
+    try:
+        seed = random.randint(0, 99999)
+        url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?seed={seed}&model=flux-schnell&width=512&height=512&turbo=true"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    image_data = io.BytesIO(data)
+                    file = discord.File(fp=image_data, filename="fast.png")
+                    await ctx.send(content=f"⚡ **Generated:** {prompt}", file=file)
+                    await msg.delete()
+                else:
+                    await msg.edit(content="❌ Failed to generate image. Please try again later.")
     except Exception as e:
-        await msg.edit(content=f"❌ Error: {str(e)}")
+        await msg.edit(content=f"❌ Error: {e}")
 # Create the FastAPI app
 app = FastAPI()
 @app.api_route("/health", methods=["GET", "HEAD"])
